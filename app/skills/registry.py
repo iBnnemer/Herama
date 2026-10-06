@@ -2,6 +2,7 @@
 import ast
 import importlib.util
 import json
+import multiprocessing
 import re
 import time
 
@@ -71,13 +72,32 @@ def list_skills() -> dict:
     return _index()
 
 
+def _sandbox_worker(path: str, args: dict, q: multiprocessing.Queue):
+    try:
+        spec = importlib.util.spec_from_file_location("_skill", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        q.put(("ok", mod.run(**args)))
+    except Exception as e:
+        q.put(("err", str(e)))
+
+
 def run(name: str, args: dict):
     if not config.SKILL_EXEC:
         raise SkillError("exec disabled (set HERAMA_SKILL_EXEC=1)")
     if name not in _index():
         raise SkillError("unknown skill")
-    p = config.SKILLS_DIR / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(f"skills.{name}", p)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.run(**args)
+    path = str(config.SKILLS_DIR / f"{name}.py")
+    q: multiprocessing.Queue = multiprocessing.Queue()
+    p = multiprocessing.Process(target=_sandbox_worker, args=(path, args, q), daemon=True)
+    p.start()
+    p.join(config.SKILL_TIMEOUT)
+    if p.is_alive():
+        p.kill()
+        raise SkillError(f"timeout ({config.SKILL_TIMEOUT}s)")
+    if q.empty():
+        raise SkillError("worker exited without result")
+    status, val = q.get()
+    if status == "err":
+        raise SkillError(val)
+    return val

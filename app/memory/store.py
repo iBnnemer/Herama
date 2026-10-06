@@ -1,9 +1,13 @@
 """Persistent local memory: SQLite + FTS5 in .memory/."""
+import re
 import sqlite3
 import threading
 import time
 
 from app import config
+
+_SENT = re.compile(r"(?<=[.!])\s+")
+_MIN_FACT = 30  # chars; shorter sentences rarely carry standalone facts
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts(id INTEGER PRIMARY KEY, kind TEXT, content TEXT, tags TEXT, ts REAL);
@@ -49,9 +53,22 @@ class Memory:
     def delete(self, fid: int):
         self._x("DELETE FROM facts WHERE id=?", (fid,))
 
-    def log_turn(self, model, prompt, response):
+    def log_turn(self, model, prompt, response, auto_extract=False):
         self._x("INSERT INTO turns(model,prompt,response,ts) VALUES(?,?,?,?)",
                 (model, prompt, response, time.time()))
+        if auto_extract and response:
+            self.extract_facts(response, tags="auto")
+
+    def extract_facts(self, text: str, tags="auto") -> list[int]:
+        """Split text into sentences and store declarative ones as facts."""
+        ids = []
+        for sent in _SENT.split(text.strip()):
+            sent = sent.strip()
+            if (len(sent) >= _MIN_FACT
+                    and not sent.endswith("?")
+                    and not sent.startswith("#")):
+                ids.append(self.add(sent, kind="auto", tags=tags))
+        return ids
 
 
 memory = Memory()

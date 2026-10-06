@@ -92,7 +92,8 @@ class GenReq(BaseModel):
     stream: bool = True
     raw: bool = False
     options: dict = {}
-    memory: bool = False  # Herama extension: inject recalled facts
+    memory: bool = False       # inject recalled facts
+    auto_extract: bool = False  # save response sentences as facts
 
 
 class ChatReq(BaseModel):
@@ -100,7 +101,8 @@ class ChatReq(BaseModel):
     messages: list[dict] = []
     stream: bool = True
     options: dict = {}
-    memory: bool = False  # Herama extension
+    memory: bool = False
+    auto_extract: bool = False
 
 
 def _build(r: GenReq) -> str:
@@ -128,7 +130,7 @@ def generate(r: GenReq):
     gen = engine.generate(r.model, _build(r), r.options, r.stream)
 
     def final(raw, text):
-        memory.log_turn(r.model, r.prompt, text)
+        memory.log_turn(r.model, r.prompt, text, auto_extract=r.auto_extract)
         u = (raw or {}).get("usage", {})
         fr = ((raw or {}).get("choices") or [{}])[0].get("finish_reason") or "stop"
         return {"model": r.model, "created_at": _now(), "response": "" if r.stream else text,
@@ -195,7 +197,7 @@ def chat(r: ChatReq):
         return {"role": "assistant", "content": text}
 
     def final(raw, text):
-        memory.log_turn(r.model, last_user, text)
+        memory.log_turn(r.model, last_user, text, auto_extract=r.auto_extract)
         u = (raw or {}).get("usage", {})
         fr = ((raw or {}).get("choices") or [{}])[0].get("finish_reason") or "stop"
         return {"model": r.model, "created_at": _now(),

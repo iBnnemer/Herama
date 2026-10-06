@@ -3,3 +3,4 @@ uvicorn[standard]>=0.29
 llama-cpp-python>=0.2.80
 psutil>=5.9
 nvidia-ml-py>=12.535 ; platform_system != "Darwin"
+pytest>=8.0
