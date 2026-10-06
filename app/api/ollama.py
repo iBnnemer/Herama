@@ -154,31 +154,17 @@ def generate(r: GenReq):
     return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
 
-def _chat_prompt(r: ChatReq) -> str:
-    """Flatten messages into a single prompt string."""
-    parts = []
-    sys_injected = False
-    for m in r.messages:
-        role, content = m.get("role", ""), m.get("content", "")
-        if role == "system":
-            parts.append(f"System: {content}")
-            sys_injected = True
-        elif role == "user":
-            parts.append(f"User: {content}")
-        elif role == "assistant":
-            parts.append(f"Assistant: {content}")
-    if r.memory and r.messages:
-        last_user = next((m["content"] for m in reversed(r.messages) if m.get("role") == "user"), "")
-        if last_user:
-            facts = memory.search(last_user)
-            if facts:
-                inject = "Known facts:\n" + "\n".join(f"- {f['content']}" for f in facts)
-                if sys_injected:
-                    parts.insert(1, inject)
-                else:
-                    parts.insert(0, inject)
-    parts.append("Assistant:")
-    return "\n".join(parts)
+def _inject_memory(messages: list[dict], query: str) -> list[dict]:
+    """Prepend a system message with recalled facts if any match."""
+    facts = memory.search(query)
+    if not facts:
+        return messages
+    block = "Known facts:\n" + "\n".join(f"- {f['content']}" for f in facts)
+    if messages and messages[0].get("role") == "system":
+        msgs = list(messages)
+        msgs[0] = {"role": "system", "content": msgs[0]["content"] + "\n" + block}
+        return msgs
+    return [{"role": "system", "content": block}] + list(messages)
 
 
 @router.post("/chat")
@@ -189,9 +175,9 @@ def chat(r: ChatReq):
         raise HTTPException(404, f"model '{r.model}' not found")
 
     t0 = time.perf_counter_ns()
-    prompt = _chat_prompt(r)
-    gen = engine.generate(r.model, prompt, r.options, r.stream)
     last_user = next((m["content"] for m in reversed(r.messages) if m.get("role") == "user"), "")
+    msgs = _inject_memory(r.messages, last_user) if r.memory and last_user else r.messages
+    gen = engine.chat(r.model, msgs, r.options, r.stream)
 
     def _msg(text: str) -> dict:
         return {"role": "assistant", "content": text}

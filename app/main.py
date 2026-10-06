@@ -51,6 +51,21 @@ app.include_router(memory.router)
 app.include_router(skills.router)
 
 
+def main():
+    import uvicorn
+
+    if config.PRELOAD:
+        from app.engine import engine as _eng
+        try:
+            log.info("preloading %s", config.PRELOAD)
+            _eng.load(config.PRELOAD, keep_alive=-1)
+            log.info("preloaded %s", config.PRELOAD)
+        except Exception as e:
+            log.warning("preload failed: %s", e)
+
+    uvicorn.run("app.main:app", host=config.HOST, port=config.PORT)
+
+
 if __name__ == "__main__":
     import uvicorn
 

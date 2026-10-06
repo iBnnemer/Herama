@@ -88,8 +88,9 @@ def run(name: str, args: dict):
     if name not in _index():
         raise SkillError("unknown skill")
     path = str(config.SKILLS_DIR / f"{name}.py")
-    q: multiprocessing.Queue = multiprocessing.Queue()
-    p = multiprocessing.Process(target=_sandbox_worker, args=(path, args, q), daemon=True)
+    ctx = multiprocessing.get_context("spawn")
+    q: multiprocessing.Queue = ctx.Queue()
+    p = ctx.Process(target=_sandbox_worker, args=(path, args, q), daemon=True)
     p.start()
     p.join(config.SKILL_TIMEOUT)
     if p.is_alive():

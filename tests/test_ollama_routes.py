@@ -20,6 +20,13 @@ class _FakeLlama:
             return iter([token])
         return token
 
+    def create_chat_completion(self, messages, stream=False, **kw):
+        token = {"choices": [{"message": {"role": "assistant", "content": "hi"},
+                               "delta": {"content": "hi"}, "finish_reason": "stop"}], "usage": {}}
+        if stream:
+            return iter([token])
+        return token
+
     def create_embedding(self, text):
         return {"data": [{"embedding": [0.1, 0.2]}]}
 

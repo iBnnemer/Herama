@@ -29,7 +29,12 @@ def _read_val(f, t):
     raise ValueError(f"gguf type {t}")
 
 
+_meta_cache: dict[Path, dict] = {}
+
+
 def gguf_meta(path: Path) -> dict:
+    if path in _meta_cache:
+        return _meta_cache[path]
     out = {}
     with open(path, "rb") as f:
         if f.read(4) != b"GGUF":
@@ -45,6 +50,7 @@ def gguf_meta(path: Path) -> dict:
                 out[short] = v
             if len(out) == len(_WANT):
                 break
+    _meta_cache[path] = out
     return out
 
 
