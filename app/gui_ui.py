@@ -1,937 +1,713 @@
-"""
-Herama GUI — Production AI Infrastructure Dashboard.
-
-Layout:
-  ┌──────────────────────────────────────────────────────────┐
-  │  TOP: [Token Speed] [RAM] [VRAM] [Active Experts]        │
-  ├────────────────────────┬─────────────────────────────────┤
-  │  LEFT SIDEBAR          │  DASHBOARD                      │
-  │  • Model Management    │  [Context Fill donut] [Requests]│
-  │  • HF Search           ├─────────────────────────────────┤
-  │  • Context Slider      │  CHAT / TASK PLANNER TABS       │
-  └────────────────────────┴─────────────────────────────────┘
-
-Run:  python -m app.gui_ui
-Requires: customtkinter >= 5.2, matplotlib >= 3.7 (auto-installed)
-"""
+"""Herama Desktop GUI — 3-column workspace layout (customtkinter)."""
 from __future__ import annotations
 
-# ── auto-install dependencies ─────────────────────────────────────────────────
-from app.dependency_manager import ensure_packages
-ensure_packages(["customtkinter", "matplotlib", "requests"])
-
-# ── stdlib ────────────────────────────────────────────────────────────────────
-import json
 import threading
 import time
+import queue
 from collections import deque
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Callable
 
-# ── third-party ───────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Auto-install dependencies
+# ---------------------------------------------------------------------------
+from app.dependency_manager import ensure_packages
+
+ensure_packages(["customtkinter", "requests", "psutil"])
+
 import customtkinter as ctk
-import matplotlib
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.animation import FuncAnimation
-import requests as _requests
+import requests
+import psutil
 
-# ── project ───────────────────────────────────────────────────────────────────
-from app import config
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Theme & Palette
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Theme / palette
+# ---------------------------------------------------------------------------
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+ctk.set_default_color_theme("dark-blue")
 
-BG          = "#121214"
-PANEL       = "#1a1a1f"
-CARD        = "#1e1e26"
-CARD2       = "#16161c"
-BORDER      = "#2a2a38"
-ACCENT_ORG  = "#f97316"   # orange — active / VRAM
-ACCENT_GRN  = "#22c55e"   # green  — healthy / RAM
-ACCENT_BLU  = "#3b82f6"   # blue   — info / speed
-ACCENT_PRP  = "#a855f7"   # purple — experts
-TEXT        = "#e2e8f0"
-DIM         = "#64748b"
-DIM2        = "#475569"
-RED         = "#ef4444"
-YELLOW      = "#eab308"
+BG         = "#1a1a1f"   # app background
+SIDEBAR_BG = "#141417"   # left + right sidebar
+PANEL_BG   = "#1e1e26"   # sub-panels
+CARD_BG    = "#16161c"   # card / item background
+BORDER     = "#2a2a35"   # dividers
+TEXT       = "#e2e8f0"   # primary text
+TEXT_DIM   = "#6b7280"   # secondary text
+ACCENT     = "#3b82f6"   # blue accent
+ACCENT_GRN = "#22c55e"   # green
+ACCENT_ORG = "#f97316"   # orange
+ACCENT_PRP = "#a855f7"   # purple
+ACCENT_RED = "#ef4444"   # error
 
-# matplotlib style to match dark theme
-_MPL_STYLE = {
-    "figure.facecolor": CARD,
-    "axes.facecolor":   CARD,
-    "axes.edgecolor":   BORDER,
-    "axes.labelcolor":  DIM,
-    "text.color":       TEXT,
-    "xtick.color":      DIM,
-    "ytick.color":      DIM,
-    "grid.color":       BORDER,
-    "lines.linewidth":  1.6,
-}
-for k, v in _MPL_STYLE.items():
-    plt.rcParams[k] = v
+API_BASE   = "http://127.0.0.1:11434"
+POLL_MS    = 2000        # sidebar polls every 2 s
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────────────────────────────────────
-BASE_URL       = "http://127.0.0.1:11434"
-VRAM_TOTAL_GB  = 10.8
-RAM_TOTAL_GB   = 31.2
-POLL_MS        = 500    # hardware poll interval
-HISTORY_LEN    = 60     # data points kept for sparklines
+# ---------------------------------------------------------------------------
+# Shared live state (updated by background thread, read by _tick)
+# ---------------------------------------------------------------------------
+class _State:
+    connected       : bool       = False
+    active_model    : str        = ""
+    local_models    : list[str]  = []
+    skills          : dict       = {}
+    bg_tasks        : deque      = deque(maxlen=100)  # (time_str, label, status)
+    project_files   : list[str]  = []   # placeholder
+    plan_text       : str        = ""   # placeholder markdown plan
+    tps             : float      = 0.0
 
+state = _State()
+_ui_queue: queue.Queue = queue.Queue()   # (func, *args) dispatched to main thread
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Shared live metrics (updated from background thread)
-# ─────────────────────────────────────────────────────────────────────────────
-class Metrics:
-    def __init__(self):
-        self.lock           = threading.Lock()
-        self.connected      = False
-        self.active_model   = None
-        self.tps            = 0.0
-        self.tps_history    = deque([0.0] * HISTORY_LEN, maxlen=HISTORY_LEN)
-        self.ram_used_gb    = 0.0
-        self.vram_used_gb   = 0.0
-        self.cpu_layers     = 0
-        self.gpu_layers     = 0
-        self.n_ctx          = 0
-        self.context_tokens = 0
-        self.skills: dict   = {}
-        self.requests: list = []   # recent API calls [(time, status, tok/s, ms)]
-        self.local_models: list = []
-
-
-metrics = Metrics()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Background poller
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _poll_loop(app_ref):
-    import psutil
+# ---------------------------------------------------------------------------
+# Background poll
+# ---------------------------------------------------------------------------
+def _poll(app_ref):
     while True:
         try:
-            health = _requests.get(f"{BASE_URL}/health", timeout=2).json()
-            connected = True
-            model = health.get("model")
+            r = requests.get(f"{API_BASE}/health", timeout=2)
+            state.connected = r.status_code == 200
         except Exception:
-            connected = False
-            model = None
-            health = {}
+            state.connected = False
 
         try:
-            ram_used = (psutil.virtual_memory().total -
-                        psutil.virtual_memory().available) / 1024 ** 3
+            r = requests.get(f"{API_BASE}/api/tags", timeout=2)
+            state.local_models = [m["name"] for m in r.json().get("models", [])]
         except Exception:
-            ram_used = 0.0
+            pass
 
         try:
-            import pynvml
-            pynvml.nvmlInit()
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            mi = pynvml.nvmlDeviceGetMemoryInfo(h)
-            vram_used = (mi.total - mi.free) / 1024 ** 3
+            r = requests.get(f"{API_BASE}/api/skills", timeout=2)
+            state.skills = r.json()
         except Exception:
-            vram_used = 0.0
-
-        # model info (gpu/cpu layers)
-        gpu_layers = cpu_layers = n_ctx = 0
-        if model:
-            try:
-                ps_data = _requests.get(f"{BASE_URL}/api/ps", timeout=2).json()
-                ms_list = ps_data.get("models", [])
-                if ms_list:
-                    det = ms_list[0].get("details", {})
-                    gpu_layers = det.get("n_gpu_layers", 0) or 0
-                    cpu_layers = max(0, (det.get("block_count", 32) or 32) - gpu_layers)
-                    n_ctx = det.get("context_length", 0) or 0
-            except Exception:
-                pass
+            pass
 
         try:
-            skills = _requests.get(f"{BASE_URL}/api/skills", timeout=2).json()
+            app_ref.after(0, app_ref._tick)
         except Exception:
-            skills = {}
-
-        try:
-            tags = _requests.get(f"{BASE_URL}/api/tags", timeout=2).json()
-            local_models = [m["name"] for m in tags.get("models", [])]
-        except Exception:
-            local_models = []
-
-        with metrics.lock:
-            metrics.connected    = connected
-            metrics.active_model = model
-            metrics.ram_used_gb  = ram_used
-            metrics.vram_used_gb = vram_used
-            metrics.gpu_layers   = gpu_layers
-            metrics.cpu_layers   = cpu_layers
-            metrics.n_ctx        = n_ctx
-            metrics.skills       = skills
-            metrics.local_models = local_models
+            pass
 
         time.sleep(POLL_MS / 1000)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Reusable widget utilities
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _label(parent, text="", font_size=10, bold=False, color=TEXT, **kw):
-    weight = "bold" if bold else "normal"
-    return ctk.CTkLabel(parent, text=text,
-                        font=("Segoe UI", font_size, weight),
-                        text_color=color, **kw)
-
-
-def _divider(parent, row, padx=8):
-    ctk.CTkFrame(parent, height=1, fg_color=BORDER).grid(
-        row=row, column=0, columnspan=99, sticky="ew", padx=padx, pady=4)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dashboard Cards (top row)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class SparkCard(ctk.CTkFrame):
-    """Card A — Token Speed with mini sparkline."""
-
-    def __init__(self, parent, **kw):
-        super().__init__(parent, fg_color=CARD, corner_radius=12,
-                         border_width=1, border_color=BORDER, **kw)
-        self.columnconfigure(0, weight=1)
-
-        _label(self, "TOKEN SPEED", 9, color=DIM).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
-        self._val = ctk.StringVar(value="— tok/s")
-        _label(self, font_size=22, bold=True, color=ACCENT_BLU,
-               textvariable=self._val).grid(row=1, column=0, sticky="w", padx=14)
-        _label(self, "Decode / Prefill", 9, color=DIM2).grid(row=2, column=0, sticky="w", padx=14)
-
-        # sparkline
-        fig, self._ax = plt.subplots(figsize=(2.6, 0.7))
-        fig.patch.set_facecolor(CARD)
-        self._ax.set_facecolor(CARD)
-        self._ax.set_xticks([]); self._ax.set_yticks([])
-        for sp in self._ax.spines.values():
-            sp.set_visible(False)
-        self._line, = self._ax.plot([], [], color=ACCENT_BLU, linewidth=1.6)
-        self._fill = self._ax.fill_between([], [], alpha=0.18, color=ACCENT_BLU)
-        canvas = FigureCanvasTkAgg(fig, master=self)
-        canvas.get_tk_widget().configure(bg=CARD, highlightthickness=0)
-        canvas.get_tk_widget().grid(row=3, column=0, sticky="ew", padx=6, pady=(2, 10))
-        self._canvas = canvas
-        self._fig = fig
-
-    def update(self, tps: float, history: list):
-        self._val.set(f"{tps:.1f} tok/s")
-        xs = list(range(len(history)))
-        ys = list(history)
-        self._line.set_data(xs, ys)
-        # rebuild fill
-        for coll in self._ax.collections:
-            coll.remove()
-        self._ax.fill_between(xs, ys, alpha=0.15, color=ACCENT_BLU)
-        self._ax.set_xlim(0, max(1, len(xs) - 1))
-        self._ax.set_ylim(0, max(1, max(ys) * 1.2))
-        try:
-            self._canvas.draw_idle()
-        except Exception:
-            pass
-
-
-class GaugeCard(ctk.CTkFrame):
-    """Generic linear gauge card (RAM, VRAM)."""
-
-    def __init__(self, parent, title: str, total_gb: float,
-                 color: str, unit: str = "GB", **kw):
-        super().__init__(parent, fg_color=CARD, corner_radius=12,
-                         border_width=1, border_color=BORDER, **kw)
-        self.total_gb = total_gb
-        self.color = color
-        self.columnconfigure(0, weight=1)
-
-        _label(self, title, 9, color=DIM).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
-        self._val_var = ctk.StringVar(value=f"0.0 / {total_gb:.1f} {unit}")
-        _label(self, font_size=18, bold=True, color=color,
-               textvariable=self._val_var).grid(row=1, column=0, sticky="w", padx=14, pady=(2, 0))
-
-        self._pct_var = ctk.StringVar(value="0 %")
-        _label(self, font_size=10, color=DIM2,
-               textvariable=self._pct_var).grid(row=2, column=0, sticky="w", padx=14)
-
-        self._bar = ctk.CTkProgressBar(self, height=8, corner_radius=4,
-                                       progress_color=color, fg_color=BORDER)
-        self._bar.set(0)
-        self._bar.grid(row=3, column=0, sticky="ew", padx=14, pady=(6, 14))
-
-    def update(self, used_gb: float):
-        pct = min(1.0, used_gb / self.total_gb) if self.total_gb else 0
-        self._bar.set(pct)
-        self._val_var.set(f"{used_gb:.1f} / {self.total_gb:.1f} GB")
-        self._pct_var.set(f"{pct * 100:.0f} %")
-
-
-class ExpertsCard(ctk.CTkFrame):
-    """Card D — Active Experts (MoE CPU vs GPU layers)."""
-
-    def __init__(self, parent, **kw):
-        super().__init__(parent, fg_color=CARD, corner_radius=12,
-                         border_width=1, border_color=BORDER, **kw)
-        self.columnconfigure(0, weight=1)
-
-        _label(self, "ACTIVE EXPERTS", 9, color=DIM).grid(
-            row=0, column=0, sticky="w", padx=14, pady=(12, 0))
-
-        self._gpu_var = ctk.StringVar(value="GPU  0")
-        self._cpu_var = ctk.StringVar(value="CPU  0")
-
-        _label(self, font_size=18, bold=True, color=ACCENT_PRP,
-               textvariable=self._gpu_var).grid(row=1, column=0, sticky="w", padx=14, pady=(2, 0))
-        _label(self, font_size=12, color=DIM,
-               textvariable=self._cpu_var).grid(row=2, column=0, sticky="w", padx=14)
-
-        self._detail_var = ctk.StringVar(value="layers")
-        _label(self, font_size=9, color=DIM2,
-               textvariable=self._detail_var).grid(row=3, column=0, sticky="w", padx=14, pady=(0, 14))
-
-    def update(self, gpu: int, cpu: int, model: str | None):
-        self._gpu_var.set(f"GPU  {gpu}")
-        self._cpu_var.set(f"CPU  {cpu}")
-        total = gpu + cpu
-        self._detail_var.set(f"{total} total layers" + (f" · {model}" if model else ""))
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Context Fill donut
-# ─────────────────────────────────────────────────────────────────────────────
-
-class ContextDonut(ctk.CTkFrame):
-    def __init__(self, parent, **kw):
-        super().__init__(parent, fg_color=CARD, corner_radius=12,
-                         border_width=1, border_color=BORDER, **kw)
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
-
-        _label(self, "CONTEXT FILL", 9, color=DIM).grid(
-            row=0, column=0, padx=14, pady=(12, 0), sticky="w")
-
-        fig, self._ax = plt.subplots(figsize=(2.2, 2.2))
-        fig.patch.set_facecolor(CARD)
-        self._pct_text = self._ax.text(0, 0, "0 %", ha="center", va="center",
-                                       fontsize=16, fontweight="bold", color=TEXT)
-        self._tok_text = self._ax.text(0, -0.28, "0 tok", ha="center", va="center",
-                                       fontsize=8, color=DIM)
-        self._ax.set_aspect("equal"); self._ax.axis("off")
-        canvas = FigureCanvasTkAgg(fig, master=self)
-        canvas.get_tk_widget().configure(bg=CARD, highlightthickness=0)
-        canvas.get_tk_widget().grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        self._canvas = canvas
-        self._fig = fig
-        self._drawn = False
-        self._wedge_fill = None
-        self._wedge_bg = None
-        self._draw_donut(0)
-
-    def _draw_donut(self, pct: float):
-        self._ax.clear()
-        self._ax.set_aspect("equal"); self._ax.axis("off")
-        filled = max(0.001, pct)
-        empty  = max(0.001, 1 - pct)
-        wedges, _ = self._ax.pie(
-            [filled, empty],
-            startangle=90,
-            wedgeprops={"width": 0.32, "edgecolor": CARD, "linewidth": 2},
-            colors=[ACCENT_ORG, BORDER],
-        )
-        p_str = f"{pct * 100:.0f} %"
-        self._ax.text(0, 0.06, p_str, ha="center", va="center",
-                      fontsize=16, fontweight="bold", color=TEXT)
-        return wedges
-
-    def update(self, used_tokens: int, n_ctx: int):
-        pct = min(1.0, used_tokens / n_ctx) if n_ctx > 0 else 0
-        self._draw_donut(pct)
-        self._ax.text(0, -0.22, f"{used_tokens:,} / {n_ctx:,}", ha="center", va="center",
-                      fontsize=8, color=DIM)
-        try:
-            self._canvas.draw_idle()
-        except Exception:
-            pass
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Recent Requests table
-# ─────────────────────────────────────────────────────────────────────────────
-
-class RequestsTable(ctk.CTkFrame):
-    def __init__(self, parent, **kw):
-        super().__init__(parent, fg_color=CARD, corner_radius=12,
-                         border_width=1, border_color=BORDER, **kw)
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
-
-        _label(self, "RECENT SYSTEM REQUESTS", 9, color=DIM).grid(
-            row=0, column=0, padx=14, pady=(12, 4), sticky="w")
-
-        # header row
-        hdr = ctk.CTkFrame(self, fg_color=CARD2, corner_radius=0)
-        hdr.grid(row=1, column=0, sticky="ew", padx=8)
-        for i, (col, w) in enumerate([("Time", 60), ("Status", 60),
-                                       ("Prompt", 120), ("Tok/s", 55), ("ms", 55)]):
-            _label(hdr, col, 9, bold=True, color=DIM2,
-                   width=w, anchor="w").grid(row=0, column=i, padx=4, pady=3)
-
-        self._rows_frame = ctk.CTkScrollableFrame(self, fg_color=CARD,
-                                                  corner_radius=0, height=140)
-        self._rows_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        self._rows_frame.columnconfigure(list(range(5)), weight=1)
-        self.grid_rowconfigure(2, weight=1)
-        self._records: list[dict] = []
-
-    def add_request(self, status: str, prompt: str, tps: float, ms: float):
-        ts = time.strftime("%H:%M:%S")
-        self._records.insert(0, {"ts": ts, "status": status,
-                                  "prompt": prompt[:30], "tps": tps, "ms": ms})
-        self._records = self._records[:50]
-        self._render()
-
-    def _render(self):
-        for w in self._rows_frame.winfo_children():
-            w.destroy()
-        for rec in self._records[:20]:
-            ok = rec["status"] == "200"
-            sc = ACCENT_GRN if ok else RED
-            row_data = [
-                (rec["ts"],         DIM,    60),
-                (rec["status"],     sc,     60),
-                (rec["prompt"],     TEXT,   120),
-                (f"{rec['tps']:.1f}", ACCENT_BLU, 55),
-                (f"{rec['ms']:.0f}", DIM,   55),
-            ]
-            for col, (val, color, w) in enumerate(row_data):
-                _label(self._rows_frame, val, 9, color=color,
-                       width=w, anchor="w").grid(row=len(self._rows_frame.winfo_children()), column=col,
-                                                  padx=4, pady=1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
+# ===========================================================================
 # LEFT SIDEBAR
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ===========================================================================
 class LeftSidebar(ctk.CTkFrame):
-    def __init__(self, parent, app: "HeramaApp", **kw):
-        super().__init__(parent, width=260, fg_color=PANEL,
-                         corner_radius=0, **kw)
-        self.app = app
+    """Navigation sidebar — Sessions / Projects / Bots / Artifacts / Routines."""
+
+    def __init__(self, master, on_section: Callable[[str], None], **kw):
+        super().__init__(master, width=220, fg_color=SIDEBAR_BG, corner_radius=0, **kw)
+        self.on_section = on_section
+        self._active_section = "Sessions"
+        self._build()
+
+    def _build(self):
+        self.pack_propagate(False)
         self.grid_propagate(False)
-        self.columnconfigure(0, weight=1)
 
-        # branding
-        _label(self, "⚡ HERAMA", 15, bold=True, color=ACCENT_ORG).grid(
-            row=0, column=0, sticky="w", padx=14, pady=(16, 2))
-        _label(self, "Local LLM Infrastructure", 9, color=DIM).grid(
-            row=1, column=0, sticky="w", padx=14)
+        # ── top tab row: SESSIONS / BOTS ──
+        tab_row = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0)
+        tab_row.pack(fill="x", padx=0, pady=(8, 0))
 
-        _divider(self, 2)
+        self._tab_sessions = ctk.CTkButton(
+            tab_row, text="SESSIONS", font=("Segoe UI", 11, "bold"),
+            fg_color=CARD_BG, hover_color=BORDER, text_color=TEXT,
+            corner_radius=6, height=28,
+            command=lambda: self._show_section("Sessions"),
+        )
+        self._tab_sessions.pack(side="left", padx=(8, 2), pady=2)
 
-        # status pill
-        self._status_var = ctk.StringVar(value="● Offline")
-        self._status_lbl = ctk.CTkLabel(self, textvariable=self._status_var,
-                                        font=("Segoe UI", 10, "bold"),
-                                        text_color=RED)
-        self._status_lbl.grid(row=3, column=0, sticky="w", padx=14, pady=(0, 4))
+        self._tab_bots = ctk.CTkButton(
+            tab_row, text="BOTS", font=("Segoe UI", 11, "bold"),
+            fg_color=SIDEBAR_BG, hover_color=BORDER, text_color=TEXT_DIM,
+            corner_radius=6, height=28,
+            command=lambda: self._show_section("Bots"),
+        )
+        self._tab_bots.pack(side="left", padx=(2, 8), pady=2)
 
-        # model display
-        _label(self, "ACTIVE MODEL", 8, color=DIM).grid(row=4, column=0, sticky="w", padx=14, pady=(8, 0))
-        self._model_var = ctk.StringVar(value="None")
-        _label(self, font_size=11, bold=True, color=TEXT,
-               textvariable=self._model_var, wraplength=230, anchor="w").grid(
-            row=5, column=0, sticky="w", padx=14)
+        # ── "+ New" button ──
+        ctk.CTkButton(
+            self, text="+ New", font=("Segoe UI", 12),
+            fg_color=CARD_BG, hover_color=BORDER, text_color=TEXT,
+            height=30, corner_radius=6,
+            command=lambda: self.on_section("new"),
+        ).pack(fill="x", padx=8, pady=(8, 4))
 
-        _divider(self, 6)
+        # ── nav items ──
+        nav_items = [
+            ("Projects", "Beta"),
+            ("Artifacts", ""),
+            ("Routines", ""),
+            ("Customize", ""),
+        ]
+        for label, badge in nav_items:
+            row = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0)
+            row.pack(fill="x", padx=8, pady=1)
+            btn = ctk.CTkButton(
+                row, text=label, anchor="w",
+                font=("Segoe UI", 12), fg_color=SIDEBAR_BG,
+                hover_color=CARD_BG, text_color=TEXT_DIM,
+                height=28, corner_radius=4,
+                command=lambda l=label: self.on_section(l),
+            )
+            btn.pack(side="left", fill="x", expand=True)
+            if badge:
+                ctk.CTkLabel(
+                    row, text=badge, font=("Segoe UI", 9),
+                    fg_color=ACCENT, text_color="white",
+                    corner_radius=4, padx=4, pady=1,
+                ).pack(side="right", padx=(0, 4))
 
-        # local models
-        _label(self, "LOCAL MODELS", 8, color=DIM).grid(row=7, column=0, sticky="w", padx=14, pady=(4, 2))
-        self._models_box = ctk.CTkScrollableFrame(self, height=90, fg_color=BG, corner_radius=6)
-        self._models_box.grid(row=8, column=0, padx=8, sticky="ew")
-        self._models_box.columnconfigure(0, weight=1)
+        self._divider()
 
-        ctk.CTkButton(self, text="↺  Refresh", height=26,
-                      font=("Segoe UI", 10), fg_color=CARD2, hover_color=BORDER,
-                      command=self._refresh_models).grid(
-            row=9, column=0, padx=8, pady=(4, 0), sticky="ew")
+        # ── Pinned section ──
+        ctk.CTkLabel(
+            self, text="Pinned", font=("Segoe UI", 10),
+            text_color=TEXT_DIM, anchor="w",
+        ).pack(fill="x", padx=12, pady=(4, 2))
 
-        _divider(self, 10)
+        for label in ["Herama", "Task Monitor"]:
+            self._nav_item(label, icon="◆")
 
-        # HF search
-        _label(self, "SEARCH HUGGING FACE", 8, color=DIM).grid(
-            row=11, column=0, sticky="w", padx=14, pady=(4, 2))
-        self._hf_entry = ctk.CTkEntry(self, placeholder_text="mistral 7b Q4…",
-                                      font=("Segoe UI", 11), height=32)
-        self._hf_entry.grid(row=12, column=0, padx=8, sticky="ew")
-        self._hf_entry.bind("<Return>", lambda _: self._hf_search())
-        ctk.CTkButton(self, text="Search  ↗", height=30,
-                      font=("Segoe UI", 10, "bold"),
-                      fg_color=ACCENT_ORG, hover_color="#ea6a0a",
-                      text_color=BG,
-                      command=self._hf_search).grid(
-            row=13, column=0, padx=8, pady=(4, 0), sticky="ew")
+        self._divider()
 
-        self._hf_results = ctk.CTkScrollableFrame(self, fg_color=BG, corner_radius=6, height=180)
-        self._hf_results.grid(row=14, column=0, padx=8, pady=(4, 0), sticky="ew")
-        self._hf_results.columnconfigure(0, weight=1)
+        # ── Models section ──
+        ctk.CTkLabel(
+            self, text="Local Models", font=("Segoe UI", 10),
+            text_color=TEXT_DIM, anchor="w",
+        ).pack(fill="x", padx=12, pady=(4, 2))
 
-        _divider(self, 15)
+        self._models_frame = ctk.CTkScrollableFrame(
+            self, fg_color=SIDEBAR_BG, height=120, corner_radius=0,
+        )
+        self._models_frame.pack(fill="x", padx=4)
 
-        # context slider
-        _label(self, "CONTEXT LENGTH", 8, color=DIM).grid(
-            row=16, column=0, sticky="w", padx=14, pady=(4, 0))
-        self._ctx_label_var = ctk.StringVar(value="4,096 tokens")
-        _label(self, font_size=12, bold=True, color=ACCENT_BLU,
-               textvariable=self._ctx_label_var).grid(row=17, column=0, sticky="w", padx=14)
-        self._ctx_slider = ctk.CTkSlider(self, from_=512, to=262144,
-                                         number_of_steps=511,
-                                         command=self._on_ctx,
-                                         button_color=ACCENT_ORG,
-                                         progress_color=ACCENT_ORG,
-                                         fg_color=BORDER)
-        self._ctx_slider.set(4096)
-        self._ctx_slider.grid(row=18, column=0, padx=8, pady=(0, 8), sticky="ew")
+        self._divider()
 
-        self.grid_rowconfigure(19, weight=1)
+        # ── Status chip ──
+        self._status_lbl = ctk.CTkLabel(
+            self, text="⬤  Offline", font=("Segoe UI", 11),
+            text_color=ACCENT_RED, anchor="w",
+        )
+        self._status_lbl.pack(fill="x", padx=12, pady=(4, 4))
 
-        # skills badge at bottom
-        _divider(self, 20)
-        _label(self, "ACQUIRED SKILLS", 8, color=DIM).grid(
-            row=21, column=0, sticky="w", padx=14, pady=(4, 2))
-        self._skills_box = ctk.CTkScrollableFrame(self, height=80, fg_color=BG, corner_radius=6)
-        self._skills_box.grid(row=22, column=0, padx=8, pady=(0, 12), sticky="ew")
-        self._skills_box.columnconfigure(0, weight=1)
+    def _divider(self):
+        ctk.CTkFrame(self, height=1, fg_color=BORDER, corner_radius=0).pack(
+            fill="x", padx=0, pady=4
+        )
 
-    # ── callbacks ──
+    def _nav_item(self, label: str, icon: str = "•"):
+        btn = ctk.CTkButton(
+            self, text=f"  {icon}  {label}", anchor="w",
+            font=("Segoe UI", 12), fg_color=SIDEBAR_BG,
+            hover_color=CARD_BG, text_color=TEXT,
+            height=28, corner_radius=4,
+            command=lambda: self.on_section(label),
+        )
+        btn.pack(fill="x", padx=4, pady=1)
+        return btn
 
-    def _refresh_models(self):
-        def _w():
-            try:
-                d = _requests.get(f"{BASE_URL}/api/tags", timeout=5).json()
-                models = [m["name"] for m in d.get("models", [])]
-            except Exception:
-                models = []
-            self.after(0, lambda: self._fill_models(models))
-        threading.Thread(target=_w, daemon=True).start()
+    def _show_section(self, name: str):
+        self._active_section = name
+        is_s = name == "Sessions"
+        self._tab_sessions.configure(
+            fg_color=CARD_BG if is_s else SIDEBAR_BG,
+            text_color=TEXT if is_s else TEXT_DIM,
+        )
+        self._tab_bots.configure(
+            fg_color=CARD_BG if not is_s else SIDEBAR_BG,
+            text_color=TEXT if not is_s else TEXT_DIM,
+        )
 
-    def _fill_models(self, models):
-        for w in self._models_box.winfo_children():
+    def refresh(self):
+        # update model list
+        for w in self._models_frame.winfo_children():
             w.destroy()
-        if not models:
-            _label(self._models_box, "No local models", 9, color=DIM).grid(pady=4)
-            return
-        for name in models:
-            ctk.CTkButton(
-                self._models_box, text=name, height=24,
-                font=("Segoe UI", 10), anchor="w",
-                fg_color=CARD2, hover_color=ACCENT_ORG,
-                text_color=TEXT,
-                command=lambda n=name: self.app.load_model(n),
-            ).grid(sticky="ew", padx=2, pady=1)
+        for m in state.local_models:
+            ctk.CTkLabel(
+                self._models_frame, text=m, font=("Segoe UI", 11),
+                text_color=TEXT_DIM, anchor="w",
+            ).pack(fill="x", padx=4, pady=1)
 
-    def _hf_search(self):
-        q = self._hf_entry.get().strip()
-        if not q:
-            return
-        self.app.log(f"Searching HF: {q}…")
-        for w in self._hf_results.winfo_children():
-            w.destroy()
-        _label(self._hf_results, "Searching…", 9, color=YELLOW).grid(pady=4)
-
-        def _w():
-            try:
-                from app.hf_manager import search_gguf, estimate_performance
-                cards = [estimate_performance(c, VRAM_TOTAL_GB, RAM_TOTAL_GB)
-                         for c in search_gguf(q, limit=15)]
-            except Exception as e:
-                cards = []
-                self.after(0, lambda: self.app.log(f"Search error: {e}"))
-            self.after(0, lambda: self._fill_results(cards))
-        threading.Thread(target=_w, daemon=True).start()
-
-    def _fill_results(self, cards):
-        for w in self._hf_results.winfo_children():
-            w.destroy()
-        if not cards:
-            _label(self._hf_results, "No results.", 9, color=DIM).grid(pady=4)
-            return
-        for card in cards[:15]:
-            f = ctk.CTkFrame(self._hf_results, fg_color=CARD2, corner_radius=6)
-            f.grid(sticky="ew", padx=2, pady=2)
-            f.columnconfigure(0, weight=1)
-            sc = ACCENT_GRN if card.estimated_tps >= 20 else YELLOW if card.estimated_tps >= 5 else RED
-            repo = card.repo_id.split("/")[-1][:24]
-            fname = Path(card.filename).name[:26]
-            _label(f, repo, 9, bold=True, anchor="w").grid(row=0, column=0, sticky="w", padx=6, pady=(4, 0))
-            _label(f, fname, 8, color=DIM, anchor="w").grid(row=1, column=0, sticky="w", padx=6)
-            inf = ctk.CTkFrame(f, fg_color="transparent")
-            inf.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 0))
-            _label(inf, f"{card.size_gb:.1f}GB", 9, color=DIM2).pack(side="left", padx=(0, 6))
-            _label(inf, card.quantization, 9, color=YELLOW).pack(side="left", padx=(0, 6))
-            _label(inf, f"~{card.estimated_tps:.0f} t/s", 9, bold=True, color=sc).pack(side="left")
-            ctk.CTkButton(f, text="⬇", width=28, height=22, font=("Segoe UI", 10),
-                          fg_color=CARD, hover_color=ACCENT_GRN,
-                          command=lambda c=card: self.app.download_model(c),
-                          ).grid(row=0, column=1, rowspan=3, padx=6, pady=4)
-
-    def _on_ctx(self, val):
-        v = max(512, (int(float(val)) // 256) * 256)
-        self._ctx_label_var.set(f"{v:,} tokens")
-        self.app.context_length = v
-
-    def set_status(self, connected, model):
-        if connected:
-            self._status_var.set("● Connected")
-            self._status_lbl.configure(text_color=ACCENT_GRN)
+        # update status chip
+        if state.connected:
+            self._status_lbl.configure(text="⬤  Backend online", text_color=ACCENT_GRN)
         else:
-            self._status_var.set("● Offline")
-            self._status_lbl.configure(text_color=RED)
-        if model:
-            self._model_var.set(model)
-        else:
-            self._model_var.set("None")
+            self._status_lbl.configure(text="⬤  Offline", text_color=ACCENT_RED)
 
-    def update_skills(self, skills: dict):
-        for w in self._skills_box.winfo_children():
-            w.destroy()
-        if not skills:
-            _label(self._skills_box, "No skills yet.", 9, color=DIM).grid(pady=2)
+
+# ===========================================================================
+# CENTER PANEL — chat area
+# ===========================================================================
+class ChatBubble(ctk.CTkFrame):
+    """Single message bubble (user or assistant)."""
+
+    def __init__(self, master, role: str, text: str, **kw):
+        is_user = role == "user"
+        super().__init__(
+            master,
+            fg_color=CARD_BG if is_user else PANEL_BG,
+            corner_radius=10,
+            **kw,
+        )
+        header = "You" if is_user else "Herama"
+        clr = ACCENT if is_user else ACCENT_PRP
+        ctk.CTkLabel(
+            self, text=header, font=("Segoe UI", 10, "bold"),
+            text_color=clr, anchor="w",
+        ).pack(fill="x", padx=10, pady=(6, 0))
+        ctk.CTkLabel(
+            self, text=text, font=("Segoe UI", 12),
+            text_color=TEXT, wraplength=580, justify="left", anchor="w",
+        ).pack(fill="x", padx=10, pady=(2, 8))
+
+
+class CenterPanel(ctk.CTkFrame):
+    """Main chat execution panel."""
+
+    def __init__(self, master, on_send: Callable[[str], None], **kw):
+        super().__init__(master, fg_color=BG, corner_radius=0, **kw)
+        self.on_send = on_send
+        self._stream_bubble: ctk.CTkLabel | None = None
+        self._build()
+
+    def _build(self):
+        # ── header bar ──
+        hdr = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0, height=44)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+
+        ctk.CTkLabel(
+            hdr, text="New session", font=("Segoe UI", 13, "bold"),
+            text_color=TEXT, anchor="w",
+        ).pack(side="left", padx=16, pady=10)
+
+        self._model_lbl = ctk.CTkLabel(
+            hdr, text="Default", font=("Segoe UI", 11),
+            text_color=TEXT_DIM,
+        )
+        self._model_lbl.pack(side="left", padx=8)
+
+        # ── scrollable message history ──
+        self._scroll = ctk.CTkScrollableFrame(
+            self, fg_color=BG, corner_radius=0,
+        )
+        self._scroll.pack(fill="both", expand=True, padx=0, pady=0)
+
+        # ── input area ──
+        input_bar = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0)
+        input_bar.pack(fill="x", pady=(0, 0))
+
+        self._input = ctk.CTkTextbox(
+            input_bar, height=60, font=("Segoe UI", 13),
+            fg_color=CARD_BG, text_color=TEXT,
+            border_color=BORDER, border_width=1, corner_radius=8,
+        )
+        self._input.pack(fill="x", padx=12, pady=10, side="left", expand=True)
+        self._input.bind("<Return>", self._on_return)
+        self._input.bind("<Shift-Return>", lambda e: None)
+
+        ctk.CTkButton(
+            input_bar, text="Send", width=70, height=40,
+            font=("Segoe UI", 12, "bold"),
+            fg_color=ACCENT, hover_color="#2563eb", text_color="white",
+            corner_radius=8, command=self._send,
+        ).pack(side="right", padx=(0, 12), pady=10)
+
+    def _on_return(self, event):
+        if event.state & 0x1:   # Shift held → newline
             return
-        for name in list(skills.keys())[:20]:
-            _label(self._skills_box, f"⚙ {name}", 9, color=TEXT, anchor="w").grid(sticky="w", padx=4, pady=1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CHAT + TASK area (bottom of main panel)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class WorkspaceArea(ctk.CTkFrame):
-    def __init__(self, parent, app: "HeramaApp", **kw):
-        super().__init__(parent, fg_color=PANEL, corner_radius=12,
-                         border_width=1, border_color=BORDER, **kw)
-        self.app = app
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
-
-        self._tabs = ctk.CTkTabview(self, fg_color=PANEL,
-                                    segmented_button_selected_color=ACCENT_ORG,
-                                    segmented_button_unselected_color=CARD2,
-                                    text_color=TEXT,
-                                    corner_radius=10)
-        self._tabs.grid(row=0, column=0, sticky="nsew", padx=0, pady=0, rowspan=2)
-
-        self._tabs.add("  Hermes Chat  ")
-        self._tabs.add("  Task Board  ")
-
-        self._build_chat(self._tabs.tab("  Hermes Chat  "))
-        self._build_tasks(self._tabs.tab("  Task Board  "))
-
-    # ── Chat ──────────────────────────────────────────────────────────────────
-
-    def _build_chat(self, frame):
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
-
-        self._chat_box = ctk.CTkTextbox(frame, font=("Consolas", 11),
-                                        fg_color=BG, text_color=TEXT,
-                                        wrap="word", state="disabled",
-                                        corner_radius=8, border_width=1,
-                                        border_color=BORDER)
-        self._chat_box.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
-
-        bar = ctk.CTkFrame(frame, fg_color="transparent")
-        bar.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
-        bar.columnconfigure(0, weight=1)
-
-        self._chat_entry = ctk.CTkEntry(bar, placeholder_text="Type a prompt…",
-                                        font=("Segoe UI", 12), height=36,
-                                        fg_color=CARD2, border_color=BORDER)
-        self._chat_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        self._chat_entry.bind("<Return>", lambda _: self._send())
-
-        self._send_btn = ctk.CTkButton(bar, text="Send ▶", width=80, height=36,
-                                       font=("Segoe UI", 11, "bold"),
-                                       fg_color=ACCENT_ORG, hover_color="#ea6a0a",
-                                       text_color=BG, command=self._send)
-        self._send_btn.grid(row=0, column=1)
-        self._history: list[dict] = []
-
-    def _append_chat(self, text: str):
-        self._chat_box.configure(state="normal")
-        self._chat_box.insert("end", text)
-        self._chat_box.see("end")
-        self._chat_box.configure(state="disabled")
+        self._send()
+        return "break"
 
     def _send(self):
-        text = self._chat_entry.get().strip()
+        text = self._input.get("1.0", "end").strip()
         if not text:
             return
-        model = self.app.active_model
-        if not model:
-            self._append_chat("[System] No model loaded.\n\n")
-            return
-        self._chat_entry.delete(0, "end")
-        self._send_btn.configure(state="disabled")
-        self._append_chat(f"\nYou › {text}\n")
-        self._append_chat("Hermes › ")
-        self._history.append({"role": "user", "content": text})
-        t0 = time.perf_counter()
-        tok_count = [0]
+        self._input.delete("1.0", "end")
+        self.add_message("user", text)
+        self.on_send(text)
 
-        def on_tok(t: str):
-            tok_count[0] += len(t.split())
-            self.after(0, lambda: self._append_chat(t))
+    def add_message(self, role: str, text: str):
+        bubble = ChatBubble(self._scroll, role, text)
+        bubble.pack(fill="x", padx=16, pady=4)
+        self._scroll._parent_canvas.yview_moveto(1.0)
 
-        def on_done():
-            elapsed = time.perf_counter() - t0
-            tps = tok_count[0] / elapsed if elapsed > 0 else 0
-            with metrics.lock:
-                metrics.tps = tps
-                metrics.tps_history.append(tps)
-            self.app.requests_table.add_request("200", text, tps, elapsed * 1000)
-            self.after(0, lambda: self._append_chat("\n"))
-            self.after(0, lambda: self._send_btn.configure(state="normal"))
+    def start_stream(self) -> ctk.CTkLabel:
+        """Create a streaming placeholder bubble; return its text label."""
+        frame = ctk.CTkFrame(self._scroll, fg_color=PANEL_BG, corner_radius=10)
+        frame.pack(fill="x", padx=16, pady=4)
+        ctk.CTkLabel(
+            frame, text="Herama", font=("Segoe UI", 10, "bold"),
+            text_color=ACCENT_PRP, anchor="w",
+        ).pack(fill="x", padx=10, pady=(6, 0))
+        lbl = ctk.CTkLabel(
+            frame, text="▋", font=("Segoe UI", 12),
+            text_color=TEXT, wraplength=580, justify="left", anchor="w",
+        )
+        lbl.pack(fill="x", padx=10, pady=(2, 8))
+        self._stream_bubble = lbl
+        self._scroll._parent_canvas.yview_moveto(1.0)
+        return lbl
 
-        def _stream_worker():
-            try:
-                r = _requests.post(
-                    f"{BASE_URL}/api/chat",
-                    json={"model": model,
-                          "messages": list(self._history),
-                          "stream": True},
-                    stream=True, timeout=120,
-                )
-                r.raise_for_status()
-                full = []
-                for line in r.iter_lines():
-                    if line:
-                        try:
-                            c = json.loads(line)
-                            tok = c.get("message", {}).get("content", "")
-                            if tok:
-                                full.append(tok)
-                                on_tok(tok)
-                        except json.JSONDecodeError:
-                            pass
-                self._history.append({"role": "assistant", "content": "".join(full)})
-                with metrics.lock:
-                    metrics.context_tokens = sum(len(m["content"].split())
-                                                  for m in self._history)
-            except Exception as e:
-                on_tok(f"\n[Error: {e}]")
-                self.app.requests_table.add_request("ERR", text, 0, 0)
-            on_done()
+    def update_model(self, model: str):
+        self._model_lbl.configure(text=model or "No model loaded")
 
-        threading.Thread(target=_stream_worker, daemon=True).start()
 
-    # ── Task Board ────────────────────────────────────────────────────────────
+# ===========================================================================
+# RIGHT SIDEBAR — Plan / Files / Background Tasks
+# ===========================================================================
+class PlanPanel(ctk.CTkFrame):
+    """Sub-panel A: Plan Tracker (markdown scaffold with todo/done)."""
 
-    def _build_tasks(self, frame):
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
+    def __init__(self, master, **kw):
+        super().__init__(master, fg_color=PANEL_BG, corner_radius=8, **kw)
+        self._build()
 
-        self._task_scroll = ctk.CTkScrollableFrame(frame, fg_color=BG, corner_radius=8)
-        self._task_scroll.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
-        self._task_scroll.columnconfigure(0, weight=1)
+    def _build(self):
+        hdr = ctk.CTkFrame(self, fg_color=PANEL_BG, corner_radius=0)
+        hdr.pack(fill="x", padx=8, pady=(8, 4))
+        ctk.CTkLabel(
+            hdr, text="Plan", font=("Segoe UI", 12, "bold"),
+            text_color=TEXT, anchor="w",
+        ).pack(side="left")
 
-        add_row = ctk.CTkFrame(frame, fg_color="transparent")
-        add_row.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
-        add_row.columnconfigure(0, weight=1)
-        self._task_entry = ctk.CTkEntry(add_row, placeholder_text="New task…",
-                                        font=("Segoe UI", 11), height=32,
-                                        fg_color=CARD2, border_color=BORDER)
-        self._task_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ctk.CTkButton(add_row, text="+ Add", width=70, height=32,
-                      fg_color=ACCENT_ORG, hover_color="#ea6a0a",
-                      text_color=BG, font=("Segoe UI", 10, "bold"),
-                      command=self._add_task).grid(row=0, column=1)
+        self._text = ctk.CTkTextbox(
+            self, font=("Cascadia Code", 11),
+            fg_color=CARD_BG, text_color=TEXT,
+            border_width=0, corner_radius=6,
+        )
+        self._text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self._text.insert("end", "No active plan.\n\nStart a conversation to generate a task plan.")
+        self._text.configure(state="disabled")
 
-        self._tasks = [
-            {"label": "Connect to Herama backend", "state": "done"},
-            {"label": "Load a GGUF model",         "state": "todo"},
-            {"label": "Test streaming chat",        "state": "todo"},
-        ]
-        self._render_tasks()
+    def set_plan(self, text: str):
+        self._text.configure(state="normal")
+        self._text.delete("1.0", "end")
+        self._text.insert("end", text or "No active plan.")
+        self._text.configure(state="disabled")
 
-    def _add_task(self):
-        t = self._task_entry.get().strip()
-        if t:
-            self._tasks.append({"label": t, "state": "todo"})
-            self._task_entry.delete(0, "end")
-            self._render_tasks()
 
-    def _render_tasks(self):
-        for w in self._task_scroll.winfo_children():
+class FilesPanel(ctk.CTkFrame):
+    """Sub-panel B: Files Browser."""
+
+    def __init__(self, master, **kw):
+        super().__init__(master, fg_color=PANEL_BG, corner_radius=8, **kw)
+        self._build()
+
+    def _build(self):
+        hdr = ctk.CTkFrame(self, fg_color=PANEL_BG, corner_radius=0)
+        hdr.pack(fill="x", padx=8, pady=(8, 4))
+        ctk.CTkLabel(
+            hdr, text="Files", font=("Segoe UI", 12, "bold"),
+            text_color=TEXT, anchor="w",
+        ).pack(side="left")
+        ctk.CTkButton(
+            hdr, text="Open folder", width=90, height=24,
+            font=("Segoe UI", 10), fg_color=CARD_BG,
+            hover_color=BORDER, text_color=TEXT_DIM, corner_radius=4,
+            command=self._open_folder,
+        ).pack(side="right")
+
+        self._tree = ctk.CTkScrollableFrame(
+            self, fg_color=CARD_BG, corner_radius=6,
+        )
+        self._tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        self._placeholder = ctk.CTkLabel(
+            self._tree,
+            text="Open files appear here\n\nPick a file in the tree,\nor click a file path in\nthe conversation.",
+            font=("Segoe UI", 11), text_color=TEXT_DIM, justify="center",
+        )
+        self._placeholder.pack(expand=True, pady=30)
+
+    def _open_folder(self):
+        try:
+            import tkinter.filedialog as fd
+            path = fd.askdirectory()
+            if path:
+                self.load_directory(path)
+        except Exception:
+            pass
+
+    def load_directory(self, path: str):
+        for w in self._tree.winfo_children():
             w.destroy()
-        cfg = {
-            "done":        (ACCENT_GRN, "✓", "Done"),
-            "in_progress": (YELLOW,     "⟳", "In Progress"),
-            "todo":        (DIM,        "○", "Todo"),
-        }
-        for i, task in enumerate(self._tasks):
-            color, icon, lbl = cfg[task["state"]]
-            card = ctk.CTkFrame(self._task_scroll, fg_color=CARD2, corner_radius=8)
-            card.grid(sticky="ew", padx=4, pady=3)
-            card.columnconfigure(1, weight=1)
-            _label(card, icon, 13, bold=True, color=color, width=26).grid(
-                row=0, column=0, padx=(10, 4), pady=8)
-            _label(card, task["label"], 11, anchor="w").grid(row=0, column=1, sticky="w")
-            _label(card, lbl, 9, color=color).grid(row=0, column=2, padx=6)
-            ctk.CTkButton(card, text="▶", width=26, height=26,
-                          fg_color="transparent", hover_color=ACCENT_ORG,
-                          command=lambda idx=i: self._cycle(idx)).grid(
-                row=0, column=3, padx=(0, 8))
+        p = Path(path)
+        if not p.exists():
+            return
+        for item in sorted(p.iterdir()):
+            icon = "📁" if item.is_dir() else "📄"
+            ctk.CTkLabel(
+                self._tree,
+                text=f"  {icon}  {item.name}",
+                font=("Segoe UI", 11), text_color=TEXT_DIM, anchor="w",
+            ).pack(fill="x", padx=4, pady=1)
 
-    def _cycle(self, idx):
-        s = ["todo", "in_progress", "done"]
-        cur = self._tasks[idx]["state"]
-        self._tasks[idx]["state"] = s[(s.index(cur) + 1) % len(s)]
-        self._render_tasks()
+    def refresh_files(self, files: list[str]):
+        for w in self._tree.winfo_children():
+            w.destroy()
+        if not files:
+            ctk.CTkLabel(
+                self._tree, text="No files loaded.",
+                font=("Segoe UI", 11), text_color=TEXT_DIM,
+            ).pack(pady=20)
+            return
+        for f in files:
+            ctk.CTkLabel(
+                self._tree, text=f"  📄  {f}",
+                font=("Segoe UI", 11), text_color=TEXT_DIM, anchor="w",
+            ).pack(fill="x", padx=4, pady=1)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main Application
-# ─────────────────────────────────────────────────────────────────────────────
+class BgTasksPanel(ctk.CTkFrame):
+    """Sub-panel C: Background Tasks Log."""
 
+    def __init__(self, master, **kw):
+        super().__init__(master, fg_color=PANEL_BG, corner_radius=8, **kw)
+        self._build()
+
+    def _build(self):
+        hdr = ctk.CTkFrame(self, fg_color=PANEL_BG, corner_radius=0)
+        hdr.pack(fill="x", padx=8, pady=(8, 4))
+        ctk.CTkLabel(
+            hdr, text="Background tasks", font=("Segoe UI", 12, "bold"),
+            text_color=TEXT, anchor="w",
+        ).pack(side="left")
+        self._count_lbl = ctk.CTkLabel(
+            hdr, text="", font=("Segoe UI", 10),
+            text_color=TEXT_DIM,
+        )
+        self._count_lbl.pack(side="right")
+
+        self._log = ctk.CTkScrollableFrame(
+            self, fg_color=CARD_BG, corner_radius=6,
+        )
+        self._log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        self._placeholder = ctk.CTkLabel(
+            self._log, text="No background tasks running.",
+            font=("Segoe UI", 11), text_color=TEXT_DIM,
+        )
+        self._placeholder.pack(expand=True, pady=20)
+
+    def add_task(self, label: str, status: str = "running"):
+        for w in self._log.winfo_children():
+            if isinstance(w, ctk.CTkLabel) and "No background" in w.cget("text"):
+                w.destroy()
+                break
+        color = {
+            "done": ACCENT_GRN,
+            "error": ACCENT_RED,
+            "running": ACCENT_ORG,
+        }.get(status, TEXT_DIM)
+        ts = datetime.now().strftime("%H:%M:%S")
+        row = ctk.CTkFrame(self._log, fg_color=CARD_BG, corner_radius=4)
+        row.pack(fill="x", padx=2, pady=2)
+        ctk.CTkLabel(
+            row, text=f"[{ts}]", font=("Cascadia Code", 10),
+            text_color=TEXT_DIM, width=60,
+        ).pack(side="left", padx=4)
+        ctk.CTkLabel(
+            row, text=label, font=("Segoe UI", 11),
+            text_color=TEXT, anchor="w",
+        ).pack(side="left", fill="x", expand=True, padx=4)
+        ctk.CTkLabel(
+            row, text=status, font=("Segoe UI", 10, "bold"),
+            text_color=color,
+        ).pack(side="right", padx=6)
+        count = len([w for w in self._log.winfo_children() if isinstance(w, ctk.CTkFrame)])
+        self._count_lbl.configure(text=f"Finished {count} ›")
+        self._log._parent_canvas.yview_moveto(1.0)
+
+
+# ===========================================================================
+# RIGHT SIDEBAR container — tabbed sub-panels
+# ===========================================================================
+class RightSidebar(ctk.CTkFrame):
+    """Dynamic right sidebar with Plan / Files / Tasks sub-panels."""
+
+    def __init__(self, master, **kw):
+        super().__init__(master, width=340, fg_color=SIDEBAR_BG, corner_radius=0, **kw)
+        self.pack_propagate(False)
+        self.grid_propagate(False)
+        self._build()
+
+    def _build(self):
+        # ── tab bar ──
+        tab_bar = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0)
+        tab_bar.pack(fill="x", padx=8, pady=(8, 4))
+
+        self._tabs: dict[str, ctk.CTkButton] = {}
+        for name in ("Plan", "Files", "Tasks"):
+            btn = ctk.CTkButton(
+                tab_bar, text=name, font=("Segoe UI", 11),
+                fg_color=CARD_BG, hover_color=BORDER,
+                text_color=TEXT_DIM, corner_radius=6,
+                height=26, width=70,
+                command=lambda n=name: self._show_tab(n),
+            )
+            btn.pack(side="left", padx=2)
+            self._tabs[name] = btn
+
+        # ── panels ──
+        self._panels: dict[str, ctk.CTkFrame] = {}
+
+        self._plan   = PlanPanel(self)
+        self._files  = FilesPanel(self)
+        self._tasks  = BgTasksPanel(self)
+
+        self._panels["Plan"]  = self._plan
+        self._panels["Files"] = self._files
+        self._panels["Tasks"] = self._tasks
+
+        self._show_tab("Plan")
+
+    def _show_tab(self, name: str):
+        for n, panel in self._panels.items():
+            panel.pack_forget()
+        for n, btn in self._tabs.items():
+            btn.configure(
+                fg_color=ACCENT if n == name else CARD_BG,
+                text_color=TEXT if n == name else TEXT_DIM,
+            )
+        self._panels[name].pack(fill="both", expand=True, padx=4, pady=(0, 4))
+
+    # convenience proxies
+    @property
+    def plan(self)  -> PlanPanel:    return self._plan
+    @property
+    def files(self) -> FilesPanel:   return self._files
+    @property
+    def tasks(self) -> BgTasksPanel: return self._tasks
+
+
+# ===========================================================================
+# Main application
+# ===========================================================================
 class HeramaApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Herama  —  Local LLM Infrastructure")
-        self.geometry("1440x900")
-        self.minsize(1100, 700)
+        self.title("Herama  —  Local LLM Workspace")
+        self.geometry("1400x860")
+        self.minsize(1100, 600)
         self.configure(fg_color=BG)
 
-        self.active_model: str | None = None
-        self.context_length: int = 4096
+        self._history: list[dict] = []          # [{role, content}]
+        self._stream_label: ctk.CTkLabel | None = None
+        self._stream_buf: str = ""
 
-        # ── layout grid ──
-        # col 0: left sidebar | col 1: main dashboard (weight)
-        self.columnconfigure(0, weight=0, minsize=260)
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
-
-        # left sidebar
-        self._left = LeftSidebar(self, app=self)
-        self._left.grid(row=0, column=0, sticky="nsew")
-
-        # main area (right of sidebar)
-        main = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
-        main.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
-        main.columnconfigure(0, weight=1)
-        main.rowconfigure(1, weight=0)
-        main.rowconfigure(2, weight=1)
-
-        # ── TOP ROW CARDS ──
-        cards_row = ctk.CTkFrame(main, fg_color="transparent")
-        cards_row.grid(row=0, column=0, sticky="ew", padx=8, pady=(10, 6))
-        for i in range(4):
-            cards_row.columnconfigure(i, weight=1)
-
-        self._spark_card   = SparkCard(cards_row)
-        self._ram_card     = GaugeCard(cards_row, "RAM FOOTPRINT", RAM_TOTAL_GB,  ACCENT_GRN)
-        self._vram_card    = GaugeCard(cards_row, "VRAM FOOTPRINT", VRAM_TOTAL_GB, ACCENT_ORG)
-        self._experts_card = ExpertsCard(cards_row)
-
-        for col, card in enumerate([self._spark_card, self._ram_card,
-                                     self._vram_card, self._experts_card]):
-            card.grid(row=0, column=col, sticky="nsew", padx=5)
-
-        # ── MIDDLE ROW: donut + requests ──
-        mid = ctk.CTkFrame(main, fg_color="transparent")
-        mid.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
-        mid.columnconfigure(0, weight=0, minsize=210)
-        mid.columnconfigure(1, weight=1)
-
-        self._donut  = ContextDonut(mid)
-        self._donut.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-
-        self.requests_table = RequestsTable(mid)
-        self.requests_table.grid(row=0, column=1, sticky="nsew")
-
-        # ── WORKSPACE (chat + tasks) ──
-        self._workspace = WorkspaceArea(main, app=self)
-        self._workspace.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
-
-        # start polling
-        self._left._refresh_models()
-        self._tick()
-
-    # ── periodic UI refresh (runs on main thread via after()) ──
-
-    def _tick(self):
-        with metrics.lock:
-            connected   = metrics.connected
-            model       = metrics.active_model
-            ram         = metrics.ram_used_gb
-            vram        = metrics.vram_used_gb
-            tps         = metrics.tps
-            history     = list(metrics.tps_history)
-            gpu         = metrics.gpu_layers
-            cpu         = metrics.cpu_layers
-            n_ctx       = metrics.n_ctx
-            ctx_toks    = metrics.context_tokens
-            skills      = dict(metrics.skills)
-
-        if model:
-            self.active_model = model
-
-        self._left.set_status(connected, model)
-        self._left.update_skills(skills)
-        self._spark_card.update(tps, history)
-        self._ram_card.update(ram)
-        self._vram_card.update(vram)
-        self._experts_card.update(gpu, cpu, model)
-        self._donut.update(ctx_toks, n_ctx or self.context_length)
-
+        self._build_layout()
         self.after(POLL_MS, self._tick)
 
-    # ── public helpers ──
+    # ------------------------------------------------------------------
+    def _build_layout(self):
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=0)   # left  sidebar  — fixed
+        self.grid_columnconfigure(1, weight=1)   # center panel   — fills
+        self.grid_columnconfigure(2, weight=0)   # right sidebar  — fixed
 
-    def log(self, msg: str):
-        pass  # no standalone log panel; requests_table + status pill cover it
+        self._left  = LeftSidebar(self, on_section=self._on_nav)
+        self._left.grid(row=0, column=0, sticky="nsew")
+
+        self._center = CenterPanel(self, on_send=self._on_send)
+        self._center.grid(row=0, column=1, sticky="nsew")
+
+        self._right = RightSidebar(self)
+        self._right.grid(row=0, column=2, sticky="nsew")
+
+        # seed background task log with welcome entry
+        self._right.tasks.add_task("Herama workspace launched", "done")
+
+    # ------------------------------------------------------------------
+    def _on_nav(self, section: str):
+        """Handle left-sidebar navigation clicks."""
+        if section == "new":
+            self._center.add_message("system_info", "New session started.")
+        else:
+            self._right.tasks.add_task(f"Navigated to: {section}", "done")
+
+    # ------------------------------------------------------------------
+    def _tick(self):
+        """Periodic UI refresh (runs on main thread via after())."""
+        self._left.refresh()
+        if state.active_model:
+            self._center.update_model(state.active_model)
+        self.after(POLL_MS, self._tick)
+
+    # ------------------------------------------------------------------
+    def _on_send(self, text: str):
+        """Handle user message send."""
+        self._history.append({"role": "user", "content": text})
+        self._right.tasks.add_task(f"Chat → {text[:40]}…" if len(text) > 40 else f"Chat → {text}", "running")
+
+        if not state.connected:
+            self._center.add_message("assistant", "⚠ Backend is offline. Start `herama` server first.")
+            return
+
+        if not state.local_models:
+            self._center.add_message("assistant", "⚠ No models loaded. Use the sidebar to download one.")
+            return
+
+        model = state.active_model or state.local_models[0]
+        stream_lbl = self._center.start_stream()
+        self._stream_label = stream_lbl
+        self._stream_buf = ""
+
+        threading.Thread(
+            target=self._stream_generate,
+            args=(model, text, stream_lbl),
+            daemon=True,
+        ).start()
+
+    # ------------------------------------------------------------------
+    def _stream_generate(self, model: str, prompt: str, lbl: ctk.CTkLabel):
+        """Run /api/generate streaming in background thread."""
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": True,
+        }
+        buf = ""
+        try:
+            with requests.post(
+                f"{API_BASE}/api/generate", json=payload, stream=True, timeout=120
+            ) as resp:
+                import json as _json
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        chunk = _json.loads(line)
+                    except Exception:
+                        continue
+                    token = chunk.get("response", "")
+                    buf += token
+                    captured = buf
+                    self.after(0, lambda t=captured: lbl.configure(text=t))
+                    if chunk.get("done"):
+                        break
+            self._history.append({"role": "assistant", "content": buf})
+            self.after(0, lambda: self._right.tasks.add_task(
+                f"Chat ← {buf[:40]}…" if len(buf) > 40 else f"Chat ← {buf}", "done"
+            ))
+        except Exception as exc:
+            msg = f"Error: {exc}"
+            self.after(0, lambda m=msg: lbl.configure(text=m, text_color=ACCENT_RED))
+            self.after(0, lambda: self._right.tasks.add_task(f"Chat error: {exc}", "error"))
 
     def load_model(self, name: str):
-        def _w():
-            try:
-                _requests.post(f"{BASE_URL}/api/generate",
-                               json={"model": name, "prompt": "", "stream": False},
-                               timeout=60)
-                self.active_model = name
-            except Exception:
-                pass
-        threading.Thread(target=_w, daemon=True).start()
-
-    def download_model(self, card):
-        def _w():
-            from app.hf_manager import download_model, DownloadProgress
-            try:
-                download_model(card.repo_id, card.filename, config.MODELS_DIR)
-            except Exception:
-                pass
-        threading.Thread(target=_w, daemon=True).start()
+        state.active_model = name
+        self._center.update_model(name)
+        self._right.tasks.add_task(f"Load model: {name}", "running")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ===========================================================================
+# Entry point
+# ===========================================================================
 def main():
-    # start hardware poll in background
     app = HeramaApp()
-    t = threading.Thread(target=_poll_loop, args=(app,), daemon=True)
-    t.start()
+    threading.Thread(target=_poll, args=(app,), daemon=True).start()
     app.mainloop()
 
 
