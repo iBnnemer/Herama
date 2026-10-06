@@ -12,6 +12,8 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "llama-cpp-python>=0.2.80",
     "psutil>=5.9",
+    "rich>=13.0",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +22,7 @@ dev = ["pytest>=8.0", "httpx"]
 
 [project.scripts]
 herama = "app.main:main"
+herama-ui = "app.cli_ui:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
