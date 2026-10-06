@@ -48,6 +48,14 @@ class GenReq(BaseModel):
     memory: bool = False  # Herama extension: inject recalled facts
 
 
+class ChatReq(BaseModel):
+    model: str
+    messages: list[dict] = []
+    stream: bool = True
+    options: dict = {}
+    memory: bool = False  # Herama extension
+
+
 def _build(r: GenReq) -> str:
     sys = r.system or ""
     if r.memory and r.prompt:
@@ -91,6 +99,76 @@ def generate(r: GenReq):
             if isinstance(item, str):
                 buf.append(item)
                 yield json.dumps({"model": r.model, "created_at": _now(), "response": item, "done": False}) + "\n"
+            else:
+                yield json.dumps(final(item, "".join(buf))) + "\n"
+
+    return StreamingResponse(ndjson(), media_type="application/x-ndjson")
+
+
+def _chat_prompt(r: ChatReq) -> str:
+    """Flatten messages into a single prompt string."""
+    parts = []
+    sys_injected = False
+    for m in r.messages:
+        role, content = m.get("role", ""), m.get("content", "")
+        if role == "system":
+            parts.append(f"System: {content}")
+            sys_injected = True
+        elif role == "user":
+            parts.append(f"User: {content}")
+        elif role == "assistant":
+            parts.append(f"Assistant: {content}")
+    if r.memory and r.messages:
+        last_user = next((m["content"] for m in reversed(r.messages) if m.get("role") == "user"), "")
+        if last_user:
+            facts = memory.search(last_user)
+            if facts:
+                inject = "Known facts:\n" + "\n".join(f"- {f['content']}" for f in facts)
+                if sys_injected:
+                    parts.insert(1, inject)
+                else:
+                    parts.insert(0, inject)
+    parts.append("Assistant:")
+    return "\n".join(parts)
+
+
+@router.post("/chat")
+def chat(r: ChatReq):
+    try:
+        engine.path(r.model)
+    except FileNotFoundError:
+        raise HTTPException(404, f"model '{r.model}' not found")
+
+    t0 = time.perf_counter_ns()
+    prompt = _chat_prompt(r)
+    gen = engine.generate(r.model, prompt, r.options, r.stream)
+    last_user = next((m["content"] for m in reversed(r.messages) if m.get("role") == "user"), "")
+
+    def _msg(text: str) -> dict:
+        return {"role": "assistant", "content": text}
+
+    def final(raw, text):
+        memory.log_turn(r.model, last_user, text)
+        u = (raw or {}).get("usage", {})
+        fr = ((raw or {}).get("choices") or [{}])[0].get("finish_reason") or "stop"
+        return {"model": r.model, "created_at": _now(),
+                "message": _msg("" if r.stream else text),
+                "done": True, "done_reason": fr,
+                "total_duration": time.perf_counter_ns() - t0,
+                "prompt_eval_count": u.get("prompt_tokens", 0),
+                "eval_count": u.get("completion_tokens", 0)}
+
+    if not r.stream:
+        text = next(gen)
+        return final(next(gen, None), text)
+
+    def ndjson():
+        buf = []
+        for item in gen:
+            if isinstance(item, str):
+                buf.append(item)
+                yield json.dumps({"model": r.model, "created_at": _now(),
+                                  "message": _msg(item), "done": False}) + "\n"
             else:
                 yield json.dumps(final(item, "".join(buf))) + "\n"
 
