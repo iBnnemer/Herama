@@ -1,0 +1,26 @@
+services:
+  herama:
+    build: .
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./models:/models
+      - herama_memory:/herama/.memory
+      - herama_skills:/herama/skills
+    environment:
+      HERAMA_HOST: "0.0.0.0"
+      HERAMA_PORT: "11434"
+      # HERAMA_PRELOAD: "llama3"        # اسم النموذج لتحميله عند الإقلاع
+      # HERAMA_API_KEY: "changeme"      # اختياري
+      # HERAMA_SKILL_EXEC: "1"          # تفعيل تشغيل المهارات
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:11434/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  herama_memory:
+  herama_skills:

@@ -1,8 +1,18 @@
+import logging
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app import config
 from app.api import memory, ollama, skills
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+log = logging.getLogger("herama")
 
 app = FastAPI(title="Herama")
 
@@ -16,10 +26,41 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def log_middleware(request: Request, call_next):
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    ms = (time.perf_counter() - t0) * 1000
+    log.info("%s %s %d %.0fms", request.method, request.url.path, response.status_code, ms)
+    return response
+
+
+@app.get("/health")
+def health():
+    from app.engine import engine
+    loaded = engine.ps()
+    return {
+        "status": "ok",
+        "model": loaded["name"] if loaded else None,
+        "models_available": len(list(config.MODELS_DIR.glob("**/*.gguf"))),
+    }
+
+
 app.include_router(ollama.router)
 app.include_router(memory.router)
 app.include_router(skills.router)
 
+
 if __name__ == "__main__":
     import uvicorn
+
+    if config.PRELOAD:
+        from app.engine import engine
+        try:
+            log.info("preloading %s", config.PRELOAD)
+            engine.load(config.PRELOAD, keep_alive=-1)
+            log.info("preloaded %s", config.PRELOAD)
+        except Exception as e:
+            log.warning("preload failed: %s", e)
+
     uvicorn.run("app.main:app", host=config.HOST, port=config.PORT)

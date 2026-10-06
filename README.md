@@ -28,6 +28,8 @@ uvicorn app.main:app --host 127.0.0.1 --port 11434
 | `HERAMA_PORT` | `11434` | المنفذ (مثل Ollama) |
 | `HERAMA_SKILL_EXEC` | `0` | `1` لتفعيل تشغيل المهارات |
 | `HERAMA_SKILL_TIMEOUT` | `10` | مهلة تشغيل المهارة (ثواني) |
+| `HERAMA_API_KEY` | `` | مفتاح Bearer (فارغ = بلا مصادقة) |
+| `HERAMA_PRELOAD` | `` | اسم نموذج يُحمَّل فور الإقلاع |
 
 ## مسارات Ollama المتوافقة
 
@@ -43,6 +45,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 11434
 | `/api/copy` | POST | نسخ نموذج |
 | `/api/pull` | POST | stub — لا يُنزّل (ضع GGUF يدوياً) |
 | `/api/version` | GET | إصدار Herama |
+| `/health` | GET | حالة الخادم + النموذج المحمّل |
 
 ## امتدادات Herama
 
@@ -79,10 +82,12 @@ POST   /api/skills/{name}/run         تشغيل مهارة (يتطلب HERAMA_S
 ## Docker
 
 ```bash
+# بناء وتشغيل مباشر
 docker build -t herama .
-docker run -p 11434:11434 \
-  -v /path/to/models:/models \
-  herama
+docker run -p 11434:11434 -v /path/to/models:/models herama
+
+# أو باستخدام docker-compose
+docker compose up
 ```
 
 ## مصادقة API Key (اختياري)
