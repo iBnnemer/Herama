@@ -76,6 +76,28 @@ POST   /api/skills                    حفظ مهارة يدوياً
 POST   /api/skills/{name}/run         تشغيل مهارة (يتطلب HERAMA_SKILL_EXEC=1)
 ```
 
+## Docker
+
+```bash
+docker build -t herama .
+docker run -p 11434:11434 \
+  -v /path/to/models:/models \
+  herama
+```
+
+## مصادقة API Key (اختياري)
+
+```bash
+export HERAMA_API_KEY=mysecret
+```
+
+بعدها كل طلب يحتاج:
+```
+Authorization: Bearer mysecret
+```
+
+بدون `HERAMA_API_KEY` لا تُفعَّل المصادقة.
+
 ## الاختبارات
 
 ```bash

@@ -1,0 +1,8 @@
+.memory/
+models/
+skills/
+__pycache__/
+.venv/
+.git/
+tests/
+*.pyc
