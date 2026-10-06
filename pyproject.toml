@@ -16,6 +16,7 @@ dependencies = [
     "requests>=2.31",
     "huggingface_hub>=0.23",
     "customtkinter>=5.2",
+    "matplotlib>=3.7",
 ]
 
 [project.optional-dependencies]
