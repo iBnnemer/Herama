@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app import resources
 from app.engine import engine
 from app.memory.store import memory
 
@@ -36,6 +37,52 @@ def tags():
 @router.get("/version")
 def version():
     return {"version": "0.1.0-herama"}
+
+
+class ShowReq(BaseModel):
+    name: str
+    verbose: bool = False
+
+
+@router.post("/show")
+def show(r: ShowReq):
+    try:
+        p = engine.path(r.name)
+    except FileNotFoundError:
+        raise HTTPException(404, f"model '{r.name}' not found")
+    st = p.stat()
+    try:
+        meta = resources.gguf_meta(p)
+    except Exception:
+        meta = {}
+    return {
+        "model": r.name,
+        "modified_at": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
+        "size": st.st_size,
+        "details": {
+            "format": "gguf",
+            "parameter_size": str(meta.get("block_count", "")),
+            "context_length": meta.get("context_length", 0),
+            "embedding_length": meta.get("embedding_length", 0),
+        },
+        "model_info": meta if r.verbose else {},
+    }
+
+
+@router.get("/ps")
+def ps():
+    info = engine.ps()
+    if not info:
+        return {"models": []}
+    return {"models": [{
+        "name": f"{info['name']}:latest",
+        "model": f"{info['model']}:latest",
+        "size": 0,
+        "digest": "",
+        "details": {"format": "gguf"},
+        "expires_at": "",
+        "size_vram": info["n_gpu_layers"],
+    }]}
 
 
 class GenReq(BaseModel):
