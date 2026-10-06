@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator
+
+from app.dependency_manager import ensure_package
 
 # ---------------------------------------------------------------------------
 # Hardware constants (user's machine: 10.8 GB VRAM, 31.2 GB RAM)
@@ -72,12 +72,9 @@ class DownloadProgress:
 # ---------------------------------------------------------------------------
 
 def _ensure_hf() -> None:
-    """Install huggingface_hub if missing."""
-    try:
-        import huggingface_hub  # noqa: F401
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install",
-                               "huggingface_hub", "--quiet"])
+    """Install huggingface_hub if missing (delegates to dependency_manager)."""
+    if not ensure_package("huggingface_hub"):
+        raise RuntimeError("huggingface_hub could not be installed automatically")
 
 
 def _quant_from_name(filename: str) -> str:

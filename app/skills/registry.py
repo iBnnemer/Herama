@@ -4,9 +4,11 @@ import importlib.util
 import json
 import multiprocessing
 import re
+import sys
 import time
 
 from app import config
+from app.dependency_manager import ensure_package
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 BANNED = {"os.system", "subprocess", "shutil.rmtree", "eval", "exec", "__import__"}
@@ -82,12 +84,38 @@ def _sandbox_worker(path: str, args: dict, q: multiprocessing.Queue):
         q.put(("err", str(e)))
 
 
+def _scan_imports(code: str) -> list[str]:
+    """Return top-level import names from skill source code."""
+    names = []
+    try:
+        tree = ast.parse(code)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    names.append(alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names.append(node.module.split(".")[0])
+    except SyntaxError:
+        pass
+    return names
+
+
 def run(name: str, args: dict):
     if not config.SKILL_EXEC:
         raise SkillError("exec disabled (set HERAMA_SKILL_EXEC=1)")
     if name not in _index():
         raise SkillError("unknown skill")
-    path = str(config.SKILLS_DIR / f"{name}.py")
+    path = config.SKILLS_DIR / f"{name}.py"
+    # auto-install any missing third-party imports before spawning sandbox
+    try:
+        code = path.read_text("utf-8")
+        stdlib = sys.stdlib_module_names if hasattr(sys, "stdlib_module_names") else set()
+        for mod in _scan_imports(code):
+            if mod and mod not in stdlib:
+                ensure_package(mod)
+    except OSError:
+        pass
+    path = str(path)
     ctx = multiprocessing.get_context("spawn")
     q: multiprocessing.Queue = ctx.Queue()
     p = ctx.Process(target=_sandbox_worker, args=(path, args, q), daemon=True)
