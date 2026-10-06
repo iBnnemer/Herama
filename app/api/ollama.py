@@ -222,3 +222,80 @@ def chat(r: ChatReq):
                 yield json.dumps(final(item, "".join(buf))) + "\n"
 
     return StreamingResponse(ndjson(), media_type="application/x-ndjson")
+
+
+# ── model management ──────────────────────────────────────────────────────────
+
+class DeleteReq(BaseModel):
+    name: str
+
+
+class CopyReq(BaseModel):
+    source: str
+    destination: str
+
+
+class PullReq(BaseModel):
+    name: str
+    stream: bool = True
+
+
+class EmbedReq(BaseModel):
+    model: str
+    prompt: str
+    options: dict = {}
+
+
+@router.delete("/delete")
+def delete_model(r: DeleteReq):
+    try:
+        p = engine.path(r.name)
+    except FileNotFoundError:
+        raise HTTPException(404, f"model '{r.name}' not found")
+    if engine._loaded_name and r.name in (engine._loaded_name, f"{engine._loaded_name}:latest"):
+        engine.unload()
+    p.unlink()
+    return {"status": "success"}
+
+
+@router.post("/copy")
+def copy_model(r: CopyReq):
+    import shutil
+    try:
+        src = engine.path(r.source)
+    except FileNotFoundError:
+        raise HTTPException(404, f"source '{r.source}' not found")
+    dest_name = r.destination.split(":")[0]
+    dest = src.parent / f"{dest_name}.gguf"
+    if dest.exists():
+        raise HTTPException(400, f"destination '{r.destination}' already exists")
+    shutil.copy2(src, dest)
+    return {"status": "success"}
+
+
+@router.post("/pull")
+def pull(r: PullReq):
+    """Stub — Herama uses local GGUF files; place them in models/ manually."""
+    msg = f"Herama does not download models. Place '{r.name}.gguf' in the models/ directory."
+    if not r.stream:
+        return {"status": "error", "error": msg}
+
+    def _stream():
+        yield json.dumps({"status": msg, "completed": 0, "total": 0}) + "\n"
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
+
+
+@router.post("/embeddings")
+def embeddings(r: EmbedReq):
+    try:
+        engine.path(r.model)
+    except FileNotFoundError:
+        raise HTTPException(404, f"model '{r.model}' not found")
+    from app import config as _cfg
+    llm = engine.load(r.model, r.options.get("num_ctx"), r.options.get("num_gpu"),
+                      keep_alive=r.options.get("keep_alive", 300))
+    vec = llm.create_embedding(r.prompt)
+    data = vec.get("data", [{}])
+    embedding = data[0].get("embedding", []) if data else []
+    return {"embedding": embedding}
