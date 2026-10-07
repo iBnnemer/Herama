@@ -1,5 +1,6 @@
 """Per-model settings proposal: GPU layers and MoE experts kept on the CPU for a chosen context length."""
 import math
+import re
 from pathlib import Path
 
 from app import calib, hub, resources
@@ -152,7 +153,9 @@ def auto(model: Path, ctx: int, learn: bool = True) -> dict:
     """Settings chosen without user input: more experts/layers on the CPU first, then a compressed KV cache,
     and finally a lower context when nothing else makes it fit."""
     best, fitting = None, []
-    for kv in KV_TYPES:
+    # a model whose name says Q4 goes straight to a q4_0 cache when compression is needed (no q8_0 step)
+    kinds = ("f16", "q4_0") if re.search(r"q4", model.name, re.I) else KV_TYPES
+    for kv in kinds:
         p = propose(model, ctx, learn=learn, kv_type=kv)
         if not p["fits"]:
             continue

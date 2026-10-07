@@ -127,3 +127,10 @@ def test_auto_dense_compresses_kv_before_offloading_layers(tmp_path, monkeypatch
     mid = tune.auto(f, 32768)
     assert mid["kv_type"] != "f16" and mid["ngl"] == 48
     assert tune.auto(f, 65536)["kv_type"] == "q4_0"
+
+
+def test_q4_named_model_skips_q8_cache(tmp_path, monkeypatch):
+    f = _model(tmp_path, monkeypatch, 7.7, {**DENSE, "block_count": 48, "context_length": 1_000_000}, "dense-Q4_K_M.gguf")
+    assert tune.auto(f, 32768)["kv_type"] == "q4_0"
+    g = _model(tmp_path, monkeypatch, 7.7, {**DENSE, "block_count": 48, "context_length": 1_000_000}, "dense-Q6_K.gguf")
+    assert tune.auto(g, 32768)["kv_type"] in ("q8_0", "q4_0")
