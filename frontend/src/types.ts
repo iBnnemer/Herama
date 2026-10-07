@@ -31,7 +31,7 @@ export interface Conversation {
   pinned?: boolean;
 }
 
-export type View = "chat" | "projects" | "capabilities" | "messaging" | "artifacts" | "jobs";
+export type View = "chat" | "projects" | "capabilities" | "messaging" | "artifacts" | "jobs" | "settings";
 
 /** A project works like a Claude project: instructions, knowledge files, a managing agent and its own sessions. */
 export interface Project {

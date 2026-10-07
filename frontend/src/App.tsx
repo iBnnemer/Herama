@@ -19,6 +19,9 @@ import MessagingPage from "./components/pages/MessagingPage";
 import ArtifactsPage from "./components/pages/ArtifactsPage";
 import { runJobWithTools } from "./jobRunner";
 import JobsPage from "./components/pages/JobsPage";
+import SettingsPage from "./components/pages/SettingsPage";
+import { DEFAULT_PREFS, applyScale, pruneOld } from "./prefs";
+import type { Prefs } from "./prefs";
 
 const POLL_MS = 4000;
 const JOB_TICK_MS = 20_000;
@@ -36,7 +39,7 @@ interface Layout { leftOpen: boolean; panels: PanelId[]; dockWidth: number }
 
 const VIEW_TITLES: Record<Exclude<View, "chat">, string> = {
   projects: "Projects", capabilities: "Capabilities", messaging: "Messaging",
-  artifacts: "Artifacts", jobs: "Scheduled jobs",
+  artifacts: "Artifacts", jobs: "Scheduled jobs", settings: "Settings",
 };
 
 const SETTINGS_KEY = "herama.settings";
@@ -63,12 +66,20 @@ export default function App() {
   }, [state.activeModel, state.contextLength, state.tune, state.effort, state.safety]); // eslint-disable-line react-hooks/exhaustive-deps
   const [conversations, setConversations] = usePersistent<Conversation[]>("herama.convs", [newConv()], reviveConvs);
   const [activeConvId, setActiveConvId] = useState<string>(() => conversations[0].id);
+  useEffect(() => {  // once at startup: drop sessions older than the retention setting
+    try {
+      const days = (JSON.parse(localStorage.getItem("herama.prefs") || "{}") as Partial<Prefs>).retentionDays ?? 0;
+      if (days > 0) setConversations(list => { const kept = pruneOld(list, days); return kept.length === list.length ? list : kept; });
+    } catch { /* ignore */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [layout, setLayout] = usePersistent<Layout>("herama.layout", { leftOpen: true, panels: ["tasks", "files"], dockWidth: 380 });
   const [projects, setProjects] = usePersistent<Project[]>("herama.projects", []);
   const [theme, setTheme] = usePersistent<"dark" | "light">("herama.theme", "dark");
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [modelState, setModelState] = useState<ModelState | null>(null);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  const [prefs, setPrefs] = usePersistent<Prefs>("herama.prefs", DEFAULT_PREFS, v => ({ ...DEFAULT_PREFS, ...v }));
+  useEffect(() => { applyScale(prefs.scale); }, [prefs.scale]);
   useEffect(() => {
     if (!state.connected) return;
     let live = true;
@@ -274,6 +285,14 @@ export default function App() {
         return <MessagingPage items={inbox} onDelete={id => setInbox(l => l.filter(i => i.id !== id))} onClear={() => setInbox([])} />;
       case "artifacts":
         return <ArtifactsPage conversations={conversations} />;
+      case "settings":
+        return <SettingsPage state={state} theme={theme} onTheme={setTheme} prefs={prefs} onPrefs={setPrefs} conversations={conversations}
+          onClearSessions={() => { const c = newConv(); setConversations([c]); setActiveConvId(c.id); }}
+          projectDir={projectDir} onProjectDir={setProjectDir}
+          onModel={m => setState(s => ({ ...s, activeModel: m }))}
+          onContext={n => setState(s => { const tune = { ...s.tune }; delete tune[s.activeModel]; return { ...s, contextLength: n, tune }; })}
+          onEffort={e => setState(s => ({ ...s, effort: e }))} onSafety={v => setState(s => ({ ...s, safety: v }))}
+          onManageModels={() => setView("capabilities")} />;
       case "jobs":
         return <JobsPage jobs={jobs} onChange={setJobs} onRunNow={id => void runJob(id)} />;
       default:

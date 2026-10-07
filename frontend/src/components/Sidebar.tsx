@@ -183,10 +183,14 @@ export default function Sidebar(p: Props) {
         <span style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: p.connected ? "var(--green)" : "var(--border2)" }} />
         <span>{p.connected ? (p.tps > 0 ? `${p.tps.toFixed(1)} t/s` : "backend online") : "backend offline"}</span>
         {p.connected && p.engine && (
-          <span title="inference engine in use - details under Capabilities" style={{ marginLeft: "auto", color: p.accelerated === false ? "var(--accent)" : "var(--text-mid)" }}>
+          <span title="inference engine in use - details under Capabilities" style={{ color: p.accelerated === false ? "var(--accent)" : "var(--text-mid)" }}>
             {p.engine}
           </span>
         )}
+        <button title="Settings" onClick={() => p.onView("settings")} style={{
+          marginLeft: "auto", width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
+          background: p.view === "settings" ? "var(--surface2)" : "transparent", color: p.view === "settings" ? "var(--accent)" : "var(--text-mid)",
+        }}><Icon name="gear" size={24} /></button>
       </div>
 
       {editGroup !== null && (
