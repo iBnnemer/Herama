@@ -8,7 +8,7 @@ function inline(nodes: Inline[]): ReactNode[] {
   return nodes.map((n, i) => {
     switch (n.t) {
       case "text": return <span key={i}>{n.v}</span>;
-      case "code": return <code key={i} style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 5, padding: "1px 5px", fontSize: "0.9em", unicodeBidi: "isolate" }} dir="ltr">{n.v}</code>;
+      case "code": return <code key={i} style={{ background: "var(--code-bg)", color: "var(--code-fg)", borderRadius: 6, padding: "2px 6px", fontSize: "0.88em", unicodeBidi: "isolate" }} dir="ltr">{n.v}</code>;
       case "bold": return <strong key={i}>{inline(n.c)}</strong>;
       case "italic": return <em key={i}>{inline(n.c)}</em>;
       case "strike": return <s key={i}>{inline(n.c)}</s>;
@@ -28,7 +28,7 @@ function block(b: Block, i: number): ReactNode {
     case "quote": return <blockquote key={i} dir="auto" style={{ margin: "0 0 10px", paddingInlineStart: 12, borderInlineStart: "3px solid var(--border2, var(--border))", color: "var(--text-mid)" }}>{b.c.map(block)}</blockquote>;
     case "code": return (
       <pre key={i} dir="ltr" style={{ margin: "0 0 10px", padding: "10px 12px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, overflow: "auto", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre", textAlign: "left" }}>
-        <code>{b.v}</code>
+        <code style={{ color: "var(--text)" }}>{b.v}</code>
       </pre>
     );
     case "list": {
