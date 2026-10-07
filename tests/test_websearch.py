@@ -76,3 +76,27 @@ def test_fetch_retries_transient_errors(monkeypatch):
         assert False
     except tools.ToolError as e:
         assert "404" in str(e)
+
+
+def test_user_agents_rotate_and_look_like_browsers():
+    seen = {tools._browser_headers()["User-Agent"] for _ in range(60)}
+    assert len(seen) >= 3 and all(u.startswith("Mozilla/5.0") for u in seen)
+    assert {"Chrome", "Firefox", "Safari"} <= {n for u in seen for n in ("Chrome", "Firefox", "Safari") if n in u}
+
+
+def test_search_respects_time_budget(monkeypatch):
+    for k in ("HERAMA_SEARX_URL", "BRAVE_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    calls = []
+    hits, provider, notes = websearch.search("x", 5, lambda *a, **k: calls.append(1) or (b"", ""), tools.html_to_text, budget=-1)
+    assert hits == [] and not calls and any("time budget" in n for n in notes)
+
+
+def test_blocked_and_unreachable_never_raise(monkeypatch):
+    for k in ("HERAMA_SEARX_URL", "BRAVE_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(tools, "_fetch", lambda *a, **k: (b"<html>captcha challenge</html>", "text/html"))
+    r = tools.run("web_search", {"query": "x"})
+    assert r["ok"] is False and "failed" in r["result"]
+    monkeypatch.setattr(tools, "_fetch", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert tools.run("web_search", {"query": "x"})["ok"] is False

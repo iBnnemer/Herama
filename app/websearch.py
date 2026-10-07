@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import re
+import time
 import urllib.parse
 from typing import Callable
 
@@ -116,10 +117,14 @@ def _bing(q, limit, fetch, h2t):
 PROVIDERS = [("searxng", _searx), ("brave", _brave), ("duckduckgo", _ddg_html), ("duckduckgo-lite", _ddg_lite), ("bing", _bing)]
 
 
-def search(query: str, limit: int, fetch: Fetch, html_to_text) -> tuple[list[dict], str, list[str]]:
+def search(query: str, limit: int, fetch: Fetch, html_to_text, budget: float = 30.0) -> tuple[list[dict], str, list[str]]:
     """(hits, provider name, notes about providers that failed). Providers without configuration are skipped silently."""
     notes = []
+    end = time.monotonic() + budget   # never keep the app waiting longer than this in total
     for name, fn in PROVIDERS:
+        if time.monotonic() > end:
+            notes.append(f"{name}: skipped, time budget used up")
+            continue
         try:
             hits = fn(query, limit, fetch, html_to_text)
         except SearchError as e:

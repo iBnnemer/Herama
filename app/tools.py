@@ -12,6 +12,7 @@ import math
 import operator
 import os
 import platform
+import random
 import re
 import shutil
 import socket
@@ -537,8 +538,18 @@ def _file_info(a, ctx):
 
 # ── web ───────────────────────────────────────────────────────────────────────
 
-_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-       "Accept-Language": "en-US,en;q=0.9", "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"}
+_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+]
+
+
+def _browser_headers() -> dict:
+    """A realistic browser identity, a different one on each attempt."""
+    return {"User-Agent": random.choice(_AGENTS), "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"}
 
 
 class _Text(HTMLParser):
@@ -594,14 +605,14 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _fetch(url: str, limit: int = 2_000_000, data: bytes | None = None, timeout: int = 20, headers: dict | None = None,
+def _fetch(url: str, limit: int = 2_000_000, data: bytes | None = None, timeout: int = 10, headers: dict | None = None,
            retries: int = 2) -> tuple[bytes, str]:
     """Download a page. Timeouts, 429 and 5xx answers are retried with a growing pause (1 s, 2 s)."""
     _check_public(url)
     opener = urllib.request.build_opener(_Redirects)
     for attempt in range(retries + 1):
         try:
-            with opener.open(urllib.request.Request(url, data=data, headers={**_UA, **(headers or {})}), timeout=timeout) as r:
+            with opener.open(urllib.request.Request(url, data=data, headers={**_browser_headers(), **(headers or {})}), timeout=timeout) as r:
                 return r.read(limit), r.headers.get("Content-Type", "")
         except urllib.error.HTTPError as e:
             if (e.code == 429 or e.code >= 500) and attempt < retries:
