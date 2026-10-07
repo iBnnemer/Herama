@@ -6,6 +6,9 @@ import type { ChatMsg, ModelState, ToolCall, ToolInfo, ToolResult } from "../api
 import { TOOL_GROUPS, activeTools, extractPaths, matchGroups } from "../toolRouting";
 import { projectContext, projectFolders, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
+import ApprovalCard from "./ApprovalCard";
+import type { Choice } from "./ApprovalCard";
+import { approvals } from "../approvals";
 import InputArea from "./InputArea";
 
 interface Props {
@@ -77,6 +80,13 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   // Access the user approved during this conversation: extra read-only folders, extra writable folders, whole-computer search.
+  const [pending, setPending] = useState<{ title: string; detail?: string; resolve: (c: Choice) => void } | null>(null);
+  const pendingRef = useRef<typeof pending>(null);
+  const ask = (title: string, detail?: string) => new Promise<Choice>(resolve => {
+    const p = { title, detail, resolve: (c: Choice) => { pendingRef.current = null; setPending(null); resolve(c); } };
+    pendingRef.current = p;
+    setPending(p);
+  });
   const grants = useRef({ read: [] as string[], write: [] as string[], computer: false });
   const model = agent?.model || state.activeModel;
   const ready = state.connected && !!model;
@@ -142,7 +152,10 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
       .map(m => all.find(t => t.name === (m.toolLabel ?? "").split(/\s/)[0])?.group).filter((g): g is string => !!g);
     const active = new Set<string>([...matchGroups(text), ...inherited]);
     const mentioned = extractPaths(text);   // paths the user wrote are theirs to share: read access without asking
-    grants.current.read = [...new Set([...grants.current.read, ...mentioned])];
+    const saved = (p: string) => approvals.keys(p).map(k => k.slice(p.length));
+    grants.current.read = [...new Set([...grants.current.read, ...saved("read:"), ...mentioned])];
+    grants.current.write = [...new Set([...grants.current.write, ...saved("write:")])];
+    grants.current.computer = grants.current.computer || approvals.has("computer");
     const pick = () => activeTools(all, active).filter(t => allowedBySafety(t, state.safety));
     if (all.some(t => allowedBySafety(t, state.safety))) {
       if (messages[0]?.role === "system") messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${TOOLS_HINT}` };
@@ -157,8 +170,11 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
       if (!na) return res;
       const what = na.folder === "*computer*" ? "search the files on your computer" : na.write ? `change files in ${na.folder}` : `read files in ${na.folder}`;
       // Auto mode shares read access freely; changing files outside the project is always confirmed.
-      if (!((state.safety === "auto" && !na.write) || window.confirm(`Allow the agent to ${what}?`))) {
-        return { ok: false, result: `The user did not allow the agent to ${what}.` };
+      const key = na.folder === "*computer*" ? "computer" : `${na.write ? "write" : "read"}:${na.folder}`;
+      if (!(state.safety === "auto" && !na.write)) {
+        const c = await ask(`Allow the agent to ${what}?`, na.folder === "*computer*" ? undefined : na.folder);
+        if (c === "cancel") return { ok: false, result: `The user did not allow the agent to ${what}.` };
+        if (c !== "once") approvals.remember(key, c);
       }
       if (na.folder === "*computer*") grants.current.computer = true;
       else (na.write ? grants.current.write : grants.current.read).push(na.folder);
@@ -197,9 +213,14 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
           render();
           const row = turn.length - 1;
           let result: ToolResult;
+          let declined = false;
+          if (info && state.safety === "ask" && (info.kind === "write" || info.kind === "exec") && !approvals.has(`tool:${name}`)) {
+            const c = await ask(`Allow the agent to run ${name}?`, JSON.stringify(args, null, 2).slice(0, 1200));
+            if (c === "cancel") declined = true;
+            else if (c !== "once") approvals.remember(`tool:${name}`, c);
+          }
           if (!info) result = { ok: false, result: `unknown tool: ${name}` };
-          else if (state.safety === "ask" && (info.kind === "write" || info.kind === "exec")
-            && !window.confirm(`Allow the agent to run this?\n\n${toolLabel(name, args)}\n\n${JSON.stringify(args, null, 2).slice(0, 800)}`)) {
+          else if (declined) {
             result = { ok: false, result: "The user declined this action." };
           } else if (name === "ask_user") {
             question = String(args.question ?? "");
@@ -259,13 +280,14 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
   }, [streaming, queue, ready, sendNow]);
 
   const stop = () => {
+    pendingRef.current?.resolve("cancel");
     setQueue([]);
     abortRef.current?.abort();
   };
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)", minHeight: 0 }}>
-      <MessageList messages={conv.messages} />
+      <MessageList messages={conv.messages} footer={pending ? <ApprovalCard title={pending.title} detail={pending.detail} onChoose={pending.resolve} /> : null} />
       <InputArea
         models={state.models}
         activeModel={model}

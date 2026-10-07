@@ -2,9 +2,9 @@ import { useEffect, useRef } from "react";
 import type { Message } from "../types";
 import { splitThink } from "../util";
 
-export default function MessageList({ messages }: { messages: Message[] }) {
+export default function MessageList({ messages, footer }: { messages: Message[]; footer?: React.ReactNode }) {
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, footer]);
 
   if (messages.length === 0) {
     return (
@@ -19,6 +19,7 @@ export default function MessageList({ messages }: { messages: Message[] }) {
     <div style={{ flex: 1, overflow: "auto", padding: "24px 0" }}>
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 24px" }}>
         {messages.map(m => <MsgRow key={m.id} m={m} />)}
+        {footer}
       </div>
       <div ref={endRef} />
     </div>
