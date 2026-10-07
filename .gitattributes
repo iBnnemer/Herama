@@ -1,0 +1,9 @@
+# Force CRLF on Windows for batch scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Force LF for shell scripts
+*.sh  text eol=lf
+
+# Default: LF for all text files
+* text=auto
