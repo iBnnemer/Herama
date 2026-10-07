@@ -86,3 +86,14 @@ def test_search_filters(monkeypatch):
     assert [r["id"] for r in hub.search("", moe=True)] == ["a/Qwen3-30B-A3B-GGUF", "b/Bar-Uncensored-MoE"]
     assert [r["id"] for r in hub.search("", uncensored=True)] == ["b/Foo-abliterated-GGUF", "b/Bar-Uncensored-MoE"]
     assert [r["id"] for r in hub.search("", moe=True, uncensored=True)] == ["b/Bar-Uncensored-MoE"]
+
+
+def test_moe_ratio_and_speed():
+    assert hub.moe_active_ratio("Qwen3-30B-A3B-GGUF m.gguf") == 0.1
+    assert 0.2 < hub.moe_active_ratio("Mixtral-8x7B-v0.1") < 0.3
+    assert hub.moe_active_ratio("Llama-3-8B") is None
+    big = int(18 * GB)  # same file size, MoE reads far fewer bytes per token
+    dense = hub.estimate(big, HW)
+    moe = hub.estimate(big, HW, 0.1)
+    assert moe["tps"] > dense["tps"] * 5
+    assert hub.estimate(int(7 * GB), HW, 0.1)["tps"] > hub.estimate(int(7 * GB), HW)["tps"]

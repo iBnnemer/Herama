@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import platform
 import re
 import threading
 import time
@@ -60,7 +61,10 @@ def hardware() -> dict:
     low = name.lower()
     bw = next((b for k, b in _BANDWIDTH if k in low), DEFAULT_GPU_BW if name else 0)
     vm = psutil.virtual_memory()
+    cores = psutil.cpu_count(logical=False) or psutil.cpu_count() or 4
     _hw_cache = {
+        "cpu": platform.processor() or "CPU", "cpu_cores": cores,
+        "cpu_bandwidth": float(min(90, max(30, 20 + 4 * cores))),
         "gpu": name, "vram_total_gb": round(smi[1], 1) if smi else 0.0,
         "vram_free_gb": round(smi[2], 1) if smi else 0.0, "gpu_bandwidth": bw,
         "ram_total_gb": round(vm.total / 1024 ** 3, 1), "ram_free_gb": round(vm.available / 1024 ** 3, 1),
@@ -69,22 +73,44 @@ def hardware() -> dict:
     return _hw_cache
 
 
-def estimate(size_bytes: int, hw: dict | None = None) -> dict:
-    """Rough decode speed (tokens/s) and memory fit for a model file of this size on this machine."""
+_MOE_ACTIVE = re.compile(r"(\d+(?:\.\d+)?)b[-_ ]a(\d+(?:\.\d+)?)b", re.I)   # Qwen3-30B-A3B
+_MOE_EXPERTS = re.compile(r"(\d+)x(\d+(?:\.\d+)?)b", re.I)                    # Mixtral 8x7B
+
+
+def moe_active_ratio(text: str) -> float | None:
+    """Share of the weights read per token for a mixture-of-experts model, or None for a dense one."""
+    m = _MOE_ACTIVE.search(text)
+    if m:
+        return min(1.0, float(m.group(2)) / float(m.group(1)))
+    m = _MOE_EXPERTS.search(text)
+    if m:  # top-2 routing: ~2 experts plus shared layers out of ~0.84 of the nominal total
+        n, per = int(m.group(1)), float(m.group(2))
+        return min(1.0, 2 * per / (n * per * 0.84))
+    return 0.2 if re.search(r"moe", text, re.I) else None
+
+
+def estimate(size_bytes: int, hw: dict | None = None, active_ratio: float = 1.0) -> dict:
+    """Rough decode speed (tokens/s) and memory fit for a model file on this machine.
+
+    Memory fit uses the whole file; speed uses only the bytes read per token, which for a
+    mixture-of-experts model is the active share (`active_ratio`) of the weights.
+    """
     hw = hw or hardware()
     size = max(size_bytes, 1) / 1024 ** 3
+    read = size * active_ratio
     need = size * 1.1  # weights plus KV cache and buffers
     vram = hw["vram_free_gb"] or hw["vram_total_gb"]
     gpu_bw = hw["gpu_bandwidth"] * GPU_EFFICIENCY
+    cpu_bw = hw.get("cpu_bandwidth", CPU_BANDWIDTH)
     if vram and gpu_bw and need <= vram:
-        return {"fit": "gpu", "tps": round(gpu_bw / size, 1), "vram_gb": round(need, 1), "ram_gb": 0.0}
+        return {"fit": "gpu", "tps": round(gpu_bw / read, 1), "vram_gb": round(need, 1), "ram_gb": 0.0}
     if vram and gpu_bw:
-        frac = max(0.0, (vram - 0.5) / need)  # share of layers that fit in VRAM
-        sec = frac * size / gpu_bw + (1 - frac) * size / CPU_BANDWIDTH
+        frac = max(0.0, (vram - 0.5) / need)  # share of the weights that fits in VRAM
+        sec = read * (frac / gpu_bw + (1 - frac) / cpu_bw)
         fit = "split" if need <= vram + hw["ram_free_gb"] else "too_big"
         return {"fit": fit, "tps": round(1 / sec, 1), "vram_gb": round(vram, 1), "ram_gb": round(need - vram, 1)}
     fit = "cpu" if need <= hw["ram_free_gb"] else "too_big"
-    return {"fit": fit, "tps": round(CPU_BANDWIDTH / size, 1), "vram_gb": 0.0, "ram_gb": round(need, 1)}
+    return {"fit": fit, "tps": round(cpu_bw / read, 1), "vram_gb": 0.0, "ram_gb": round(need, 1)}
 
 
 # ── Hugging Face REST ─────────────────────────────────────────────────────────
@@ -140,8 +166,10 @@ def files(repo: str) -> list[dict]:
             continue
         size = (f.get("lfs") or {}).get("size") or f.get("size") or 0
         q = _QUANT.search(base)
+        ratio = moe_active_ratio(f"{repo} {base}")
         out.append({"file": path, "size": size, "quant": q.group(1).upper() if q else "",
-                    **estimate(size, hw)})
+                    "moe": ratio is not None, "active_ratio": round(ratio or 1.0, 2),
+                    **estimate(size, hw, ratio or 1.0)})
     return sorted(out, key=lambda x: x["size"])
 
 

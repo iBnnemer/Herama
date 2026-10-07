@@ -56,7 +56,7 @@ export default function ModelHub({ installed }: { installed: string[] }) {
     <div>
       {hw && (
         <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 8 }}>
-          {hw.gpu ? `${hw.gpu}${hw.vram_total_gb ? ` - ${hw.vram_total_gb} GB VRAM` : ""}` : "No GPU detected"} - {hw.ram_total_gb} GB RAM.
+          {hw.gpu ? `${hw.gpu}${hw.vram_total_gb ? ` - ${hw.vram_total_gb} GB VRAM` : ""}` : "No GPU detected"} - {hw.cpu_cores}-core CPU - {hw.ram_total_gb} GB RAM.
           Speeds are estimates for this machine.
         </div>
       )}
@@ -100,7 +100,7 @@ export default function ModelHub({ installed }: { installed: string[] }) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, wordBreak: "break-all" }}>{f.file}</div>
                     <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 3 }}>
-                      {f.quant || "GGUF"} - {gb(f.size)} - <span style={{ color: FIT_COLOR[f.fit] }}>{FIT_LABEL[f.fit]}</span>
+                      {f.moe ? "MoE" : "Dense"} - {f.quant || "GGUF"} - {gb(f.size)} - <span style={{ color: FIT_COLOR[f.fit] }}>{FIT_LABEL[f.fit]}</span>
                       {f.fit !== "too_big" && <> - about {f.tps} tok/s</>}
                     </div>
                   </div>
