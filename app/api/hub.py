@@ -23,9 +23,9 @@ def hardware():
 
 
 @router.get("/search")
-def search(q: str = ""):
+def search(q: str = "", moe: bool = False, uncensored: bool = False):
     try:
-        return hub.search(q)
+        return hub.search(q, moe, uncensored)
     except Exception as e:
         raise _upstream(e)
 

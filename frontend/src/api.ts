@@ -119,7 +119,8 @@ async function hubJson<T>(path: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-export const hubSearch = (q: string) => hubJson<HubRepo[]>(`/search?q=${encodeURIComponent(q)}`);
+export const hubSearch = (q: string, moe = false, uncensored = false) =>
+  hubJson<HubRepo[]>(`/search?q=${encodeURIComponent(q)}&moe=${moe}&uncensored=${uncensored}`);
 export const hubFiles = (repo: string) => hubJson<{ hardware: HubHardware; files: HubFile[] }>(`/files?repo=${encodeURIComponent(repo)}`);
 export const hubHardware = () => hubJson<HubHardware>("/hardware");
 export const hubDownloads = () => hubJson<HubJob[]>("/downloads");

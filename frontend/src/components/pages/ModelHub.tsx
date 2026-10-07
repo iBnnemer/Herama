@@ -20,6 +20,8 @@ export default function ModelHub({ installed }: { installed: string[] }) {
   const [repo, setRepo] = useState("");
   const [files, setFiles] = useState<HubFile[]>([]);
   const [jobs, setJobs] = useState<HubJob[]>([]);
+  const [moe, setMoe] = useState(false);
+  const [uncensored, setUncensored] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -29,14 +31,15 @@ export default function ModelHub({ installed }: { installed: string[] }) {
     finally { setBusy(false); }
   };
 
-  const search = () => run(async () => { setRepo(""); setFiles([]); setRepos(await hubSearch(query)); });
+  const search = () => run(async () => { setRepo(""); setFiles([]); setRepos(await hubSearch(query, moe, uncensored)); });
   const open = (id: string) => run(async () => {
     setRepo(id);
     const d = await hubFiles(id);
     setHw(d.hardware); setFiles(d.files);
   });
 
-  useEffect(() => { hubHardware().then(setHw).catch(() => undefined); void search(); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { hubHardware().then(setHw).catch(() => undefined); }, []);
+  useEffect(() => { void search(); }, [moe, uncensored]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const poll = useCallback(() => { hubDownloads().then(setJobs).catch(() => undefined); }, []);
   useEffect(() => {
@@ -62,6 +65,14 @@ export default function ModelHub({ installed }: { installed: string[] }) {
           placeholder="Search Hugging Face (e.g. gemma, qwen, llama)"
           style={{ flex: 1, background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", color: "var(--text)", fontSize: 13 }} />
         <button style={primaryBtn} disabled={busy} onClick={() => void search()}>Search</button>
+      </div>
+      <div style={{ display: "flex", gap: 16, marginBottom: 10, fontSize: 13, color: "var(--text-mid)" }}>
+        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={moe} onChange={e => setMoe(e.target.checked)} /> MoE
+        </label>
+        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={uncensored} onChange={e => setUncensored(e.target.checked)} /> Uncensored (abliterated or uncensored)
+        </label>
       </div>
       {error && <div style={{ color: "var(--red)", fontSize: 12, marginBottom: 8, wordBreak: "break-word" }}>{error}</div>}
 

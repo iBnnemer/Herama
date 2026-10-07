@@ -95,12 +95,31 @@ def _get_json(url: str):
         return json.load(r)
 
 
-def search(query: str, limit: int = 20) -> list[dict]:
+_MOE = re.compile(r"moe|mixtral|\d+x\d+b|[-_ ]a\d+(\.\d+)?b\b", re.I)
+_UNCENSORED = re.compile(r"abliterat|uncensor", re.I)
+
+
+def _query(q: str, limit: int) -> list[dict]:
     params = {"filter": "gguf", "sort": "downloads", "direction": "-1", "limit": str(limit)}
-    if query.strip():
-        params["search"] = query.strip()
-    rows = _get_json(f"{HF}/api/models?{urllib.parse.urlencode(params)}")
-    return [{"id": m["id"], "downloads": m.get("downloads", 0), "likes": m.get("likes", 0)} for m in rows]
+    if q.strip():
+        params["search"] = q.strip()
+    return _get_json(f"{HF}/api/models?{urllib.parse.urlencode(params)}")
+
+
+def search(query: str, moe: bool = False, uncensored: bool = False, limit: int = 30) -> list[dict]:
+    """GGUF repos by downloads. `uncensored` keeps abliterated/uncensored models; `moe` keeps mixture-of-experts."""
+    if uncensored:  # the Hub search has no OR, so query both words and merge
+        rows = [m for w in ("abliterated", "uncensored") for m in _query(f"{query} {w}", 100)]
+    else:
+        rows = _query(query, 100 if moe else limit)
+    seen, out = set(), []
+    for m in sorted(rows, key=lambda m: -m.get("downloads", 0)):
+        text = m["id"] + " " + " ".join(m.get("tags") or [])
+        if m["id"] in seen or (moe and not _MOE.search(text)) or (uncensored and not _UNCENSORED.search(text)):
+            continue
+        seen.add(m["id"])
+        out.append({"id": m["id"], "downloads": m.get("downloads", 0), "likes": m.get("likes", 0)})
+    return out[:limit]
 
 
 _QUANT = re.compile(r"(IQ\d_[A-Z]+|Q\d(?:_K)?(?:_[A-Z0-9]+)?|BF16|F16|F32)", re.I)

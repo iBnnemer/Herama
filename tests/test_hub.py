@@ -77,3 +77,12 @@ def test_download_writes_file(tmp_path, monkeypatch):
         import time; time.sleep(0.02)
     assert job["state"] == "done" and (tmp_path / "m.gguf").read_bytes() == b"abcdef"
     assert client.post("/api/hub/download", json={"repo": "a/b", "file": "x.txt"}).status_code == 400
+
+
+def test_search_filters(monkeypatch):
+    rows = [{"id": "a/Qwen3-30B-A3B-GGUF", "downloads": 9}, {"id": "a/Llama-8B", "downloads": 50},
+            {"id": "b/Foo-abliterated-GGUF", "downloads": 7}, {"id": "b/Bar-Uncensored-MoE", "downloads": 3}]
+    monkeypatch.setattr(hub, "_get_json", lambda url: rows)
+    assert [r["id"] for r in hub.search("", moe=True)] == ["a/Qwen3-30B-A3B-GGUF", "b/Bar-Uncensored-MoE"]
+    assert [r["id"] for r in hub.search("", uncensored=True)] == ["b/Foo-abliterated-GGUF", "b/Bar-Uncensored-MoE"]
+    assert [r["id"] for r in hub.search("", moe=True, uncensored=True)] == ["b/Bar-Uncensored-MoE"]
