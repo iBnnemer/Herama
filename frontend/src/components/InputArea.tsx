@@ -102,9 +102,12 @@ export default function InputArea(p: Props) {
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 6 }}>
         <Dropdown down align="right" title="model" label={p.activeModel ? shortName(p.activeModel) : "Choose a model"} value={p.activeModel}
           onPick={p.onModelChange} items={p.models.map(m => ({ id: m.name, label: shortName(m.name) }))} />
+        <button onClick={() => setShowSettings(true)}
+          title={`context and generation settings (ctx ${p.contextLength >= 1024 ? `${Math.round(p.contextLength / 1024)}K` : p.contextLength})`}
+          style={{ ...chip, display: "flex", padding: 6 }}><Icon name="gear" size={16} /></button>
       </div>
 
       <div onDragOver={e => e.preventDefault()} onDrop={onDrop} style={{
@@ -169,10 +172,7 @@ export default function InputArea(p: Props) {
         <Dropdown tinted title="commands and safety" icon={<Icon name="shield" size={13} />}
           label={SAFETY.find(x => x.id === p.safety)?.label ?? "Plan"} value={p.safety}
           onPick={id => p.onSafetyChange(id as Safety)} items={SAFETY} />
-        <button onClick={() => setShowSettings(true)} title="context and generation settings"
-          style={{ ...chip, marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>
-          ctx {p.contextLength >= 1024 ? `${Math.round(p.contextLength / 1024)}K` : p.contextLength}
-        </button>
+        <span style={{ marginLeft: "auto" }} />
         <EffortPicker effort={p.effort} onChange={p.onEffortChange} />
       </div>
 
