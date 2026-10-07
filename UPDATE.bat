@@ -9,25 +9,26 @@ echo  ===============================
 echo.
 
 git --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] git not found. Install from: https://git-scm.com/
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto :no_git
 
 echo  Fetching latest version from GitHub...
-git pull origin main
-if errorlevel 1 (
-    echo.
-    echo [ERROR] git pull failed.
-    echo         Make sure you have internet access and the repo is accessible.
-    pause
-    exit /b 1
-)
+git fetch origin main
+if errorlevel 1 goto :fail
+git reset --hard origin/main
+if errorlevel 1 goto :fail
 
 echo.
-echo  Update complete.
-echo  Launching herama...
-echo.
+echo  Update complete. Launching herama...
+start "" cmd /c "%~dp0START.bat"
+exit /b 0
 
-call START.bat
+:no_git
+echo [ERROR] git not found. Install from https://git-scm.com/
+pause
+exit /b 1
+
+:fail
+echo.
+echo [ERROR] Update failed. Check your internet connection.
+pause
+exit /b 1
