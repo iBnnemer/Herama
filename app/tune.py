@@ -48,12 +48,13 @@ def _speed(size: float, ratio: float, moe: bool, layers: int, ngl: int, cpu_moe:
     active = expert + other
     expert_gpu = max(0.0, g - cpu_moe / layers) if moe else 0.0
     gpu_read = other * g + expert * expert_gpu + kv * 0.5 * g   # attention reads the filled half of the KV cache
-    cpu_read = active - (gpu_read - kv * 0.5 * g) + kv * 0.5 * (1 - g)
+    expert_cpu = expert * (1 - expert_gpu)
+    other_cpu = other * (1 - g) + kv * 0.5 * (1 - g)
     gpu_bw = hw["gpu_bandwidth"] * hub.GPU_EFFICIENCY
     cpu_bw = hw.get("cpu_bandwidth", hub.CPU_BANDWIDTH)
-    sec = (gpu_read / gpu_bw if gpu_read and gpu_bw else 0.0) + cpu_read / cpu_bw
-    if gpu_read and not gpu_bw:
-        sec += gpu_read / cpu_bw
+    if not gpu_bw:  # no usable GPU: everything runs on the CPU
+        other_cpu, gpu_read = other_cpu + gpu_read, 0.0
+    sec = (gpu_read / gpu_bw if gpu_read else 0.0) + other_cpu / cpu_bw + expert_cpu / (cpu_bw * hub.MOE_CPU_EFFICIENCY)
     return round(1 / sec, 1) if sec > 0 else 0.0
 
 

@@ -18,6 +18,7 @@ log = logging.getLogger("herama")
 
 HF = "https://huggingface.co"
 GPU_EFFICIENCY = 0.55   # share of memory bandwidth reached by llama.cpp decoding (measured on RTX 3080 Ti)
+MOE_CPU_EFFICIENCY = 0.5  # routed experts are read in scattered pieces, so the CPU reaches about half its streaming speed
 CPU_BANDWIDTH = 50.0    # GB/s effective for CPU inference
 DEFAULT_GPU_BW = 250.0  # GB/s when the GPU model is unknown
 
@@ -126,6 +127,13 @@ def estimate(size_bytes: int, hw: dict | None = None, active_ratio: float = 1.0,
     cpu_bw = hw.get("cpu_bandwidth", CPU_BANDWIDTH)
     if vram and gpu_bw and need <= vram:
         return {"fit": "gpu", "tps": round(gpu_bw / read, 1), "vram_gb": round(need, 1), "ram_gb": 0.0}
+    if vram and gpu_bw and active_ratio < 1.0 and size * 0.12 + 0.5 <= vram:
+        # MoE: attention and shared weights stay on the GPU, only part of the experts live in system RAM
+        cpu_share = min(1.0, (need - vram) / (size * 0.88))
+        read_experts = read * 0.8
+        sec = (read - read_experts * cpu_share) / gpu_bw + read_experts * cpu_share / (cpu_bw * MOE_CPU_EFFICIENCY)
+        fit = "split" if need <= vram + ram else "too_big"
+        return {"fit": fit, "tps": round(1 / sec, 1), "vram_gb": round(vram, 1), "ram_gb": round(need - vram, 1)}
     if vram and gpu_bw:
         frac = max(0.0, (vram - 0.5) / need)  # share of the weights that fits in VRAM
         sec = read * (frac / gpu_bw + (1 - frac) / cpu_bw)

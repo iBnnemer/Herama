@@ -124,3 +124,10 @@ def test_arch_marks_unnamed_moe(monkeypatch):
     assert hub.moe_active_ratio("Qwen3.8-27B-abliterated") is None
     assert hub.moe_active_ratio("Qwen3.8-27B-abliterated", "qwen35moe") == 0.2
     assert hub.moe_active_ratio("gemma-12b", "gemma4") is None
+
+
+def test_moe_split_matches_measurement():
+    # Qwen3.6-35B-A3B Q4_K_M, 19.7 GB, on a 12 GB card: measured 51 tok/s at 8K context
+    hw = {**HW, "cpu_bandwidth": 80.0, "vram_total_gb": 12.0, "ram_total_gb": 32.0}
+    e = hub.estimate(int(19.7 * GB), hw, 3 / 35)
+    assert e["fit"] == "split" and 40 < e["tps"] < 62
