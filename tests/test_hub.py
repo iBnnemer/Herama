@@ -21,7 +21,7 @@ from app.main import app
 
 client = TestClient(app)
 GB = 1024 ** 3
-HW = {"gpu": "NVIDIA GeForce RTX 3080 Ti", "vram_total_gb": 12.0, "vram_free_gb": 11.0,
+HW = {"gpu": "NVIDIA GeForce RTX 3080 Ti", "vram_total_gb": 12.0, "vram_free_gb": 1.0,
       "gpu_bandwidth": 912, "ram_total_gb": 32.0, "ram_free_gb": 20.0}
 
 
@@ -97,3 +97,8 @@ def test_moe_ratio_and_speed():
     moe = hub.estimate(big, HW, 0.1)
     assert moe["tps"] > dense["tps"] * 5
     assert hub.estimate(int(7 * GB), HW, 0.1)["tps"] > hub.estimate(int(7 * GB), HW)["tps"]
+
+
+def test_estimate_ignores_currently_used_memory():
+    # only 1 GB VRAM free right now (another model is loaded) but the 12 GB card can hold a 7 GB model
+    assert hub.estimate(int(7 * GB), HW)["fit"] == "gpu"

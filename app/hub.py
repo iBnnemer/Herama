@@ -99,7 +99,9 @@ def estimate(size_bytes: int, hw: dict | None = None, active_ratio: float = 1.0)
     size = max(size_bytes, 1) / 1024 ** 3
     read = size * active_ratio
     need = size * 1.1  # weights plus KV cache and buffers
-    vram = hw["vram_free_gb"] or hw["vram_total_gb"]
+    # totals, not free memory: a model loaded right now can be unloaded, so it must not shrink the budget
+    vram = max(hw["vram_total_gb"] - 0.7, 0.0)
+    ram = max(hw["ram_total_gb"] * 0.9 - 2.0, 0.0)
     gpu_bw = hw["gpu_bandwidth"] * GPU_EFFICIENCY
     cpu_bw = hw.get("cpu_bandwidth", CPU_BANDWIDTH)
     if vram and gpu_bw and need <= vram:
@@ -107,9 +109,9 @@ def estimate(size_bytes: int, hw: dict | None = None, active_ratio: float = 1.0)
     if vram and gpu_bw:
         frac = max(0.0, (vram - 0.5) / need)  # share of the weights that fits in VRAM
         sec = read * (frac / gpu_bw + (1 - frac) / cpu_bw)
-        fit = "split" if need <= vram + hw["ram_free_gb"] else "too_big"
+        fit = "split" if need <= vram + ram else "too_big"
         return {"fit": fit, "tps": round(1 / sec, 1), "vram_gb": round(vram, 1), "ram_gb": round(need - vram, 1)}
-    fit = "cpu" if need <= hw["ram_free_gb"] else "too_big"
+    fit = "cpu" if need <= ram else "too_big"
     return {"fit": fit, "tps": round(cpu_bw / read, 1), "vram_gb": 0.0, "ram_gb": round(need, 1)}
 
 
