@@ -3,13 +3,14 @@ import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import http from "http";
 
-const BACKEND_URL = "http://127.0.0.1:11434";
-const isDev = !app.isPackaged;
+const BACKEND_PORT = 11434;
+const BACKEND_URL  = `http://127.0.0.1:${BACKEND_PORT}`;
+const isDev        = !app.isPackaged;
 
 let backendProc: ChildProcess | null = null;
 let mainWin: BrowserWindow | null = null;
 
-// ── backend health check ──────────────────────────────────────────────────────
+// ── health check ──────────────────────────────────────────────────────────────
 function checkBackend(): Promise<boolean> {
   return new Promise(resolve => {
     const req = http.get(`${BACKEND_URL}/health`, res => {
@@ -20,29 +21,29 @@ function checkBackend(): Promise<boolean> {
   });
 }
 
-// ── wait until backend is ready (up to 30 s) ─────────────────────────────────
 async function waitForBackend(maxMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + maxMs;
   while (Date.now() < deadline) {
     if (await checkBackend()) return true;
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 700));
   }
   return false;
 }
 
-// ── launch Python backend ─────────────────────────────────────────────────────
+// ── spawn Python backend ──────────────────────────────────────────────────────
 function spawnBackend(): void {
-  // root of the repo relative to the dist-electron/ folder in packaged app,
-  // or relative to project root in dev
   const repoRoot = isDev
-    ? path.join(__dirname, "..", "..")          // herama/
-    : path.join(process.resourcesPath, "app");  // resources/app/ after packaging
+    ? path.join(__dirname, "..", "..")
+    : path.join(process.resourcesPath, "app");
 
-  const py = process.platform === "win32" ? "python" : "python3";
+  const pyCmd = process.platform === "win32" ? "python" : "python3";
 
   backendProc = spawn(
-    py,
-    ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "11434", "--log-level", "warning"],
+    pyCmd,
+    ["-m", "uvicorn", "app.main:app",
+     "--host", "127.0.0.1",
+     "--port", String(BACKEND_PORT),
+     "--log-level", "warning"],
     {
       cwd: repoRoot,
       windowsHide: true,
@@ -53,19 +54,46 @@ function spawnBackend(): void {
   );
 
   backendProc.on("error", err => {
-    console.error("backend spawn error:", err.message);
+    console.error("[herama] backend spawn error:", err.message);
   });
 }
 
-// ── create main window ────────────────────────────────────────────────────────
-function createWindow(): BrowserWindow {
-  const win = new BrowserWindow({
+// ── loading splash ────────────────────────────────────────────────────────────
+function createSplash(): BrowserWindow {
+  const splash = new BrowserWindow({
+    width: 320,
+    height: 200,
+    frame: false,
+    resizable: false,
+    center: true,
+    backgroundColor: "#1c1c1e",
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  splash.loadURL(
+    "data:text/html;charset=utf-8," +
+    encodeURIComponent(`<!doctype html>
+<html><body style="margin:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;height:100vh;
+  background:#1c1c1e;color:#aeaeb2;font-family:system-ui,sans-serif;
+  font-size:14px;gap:14px">
+  <div style="color:#f97316;font-size:32px;font-weight:700">herama</div>
+  <div>starting backend...</div>
+</body></html>`)
+  );
+  return splash;
+}
+
+// ── main window ───────────────────────────────────────────────────────────────
+function createWindow(): void {
+  mainWin = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 860,
     minHeight: 560,
     backgroundColor: "#1c1c1e",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -73,56 +101,34 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  mainWin.once("ready-to-show", () => { mainWin?.show(); });
+
   if (isDev) {
-    win.loadURL("http://localhost:5173");
+    mainWin.loadURL("http://localhost:5173");
   } else {
-    win.loadFile(path.join(__dirname, "../dist/index.html"));
+    mainWin.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  mainWin.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
   });
 
-  return win;
+  mainWin.on("closed", () => { mainWin = null; });
 }
 
-// ── loading splash ────────────────────────────────────────────────────────────
-function showSplash(): BrowserWindow {
-  const splash = new BrowserWindow({
-    width: 340,
-    height: 220,
-    frame: false,
-    resizable: false,
-    center: true,
-    backgroundColor: "#1c1c1e",
-    alwaysOnTop: true,
-  });
-  splash.loadURL(`data:text/html,
-    <html><body style="margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-      height:100vh;background:#1c1c1e;color:#aeaeb2;font-family:system-ui;font-size:14px;gap:16px">
-      <div style="color:#f97316;font-size:36px">◈</div>
-      <div style="font-weight:600;color:#f5f5f7;font-size:16px">herama</div>
-      <div>starting backend…</div>
-    </body></html>`);
-  return splash;
-}
-
-// ── main entry ────────────────────────────────────────────────────────────────
+// ── entry ─────────────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   const alreadyUp = await checkBackend();
 
   if (!alreadyUp) {
-    const splash = showSplash();
+    const splash = createSplash();
     spawnBackend();
-    const ready = await waitForBackend(30_000);
+    await waitForBackend(30_000);
     splash.destroy();
-    if (!ready) {
-      // still open the window; the frontend will show "backend offline"
-    }
   }
 
-  mainWin = createWindow();
+  createWindow();
 });
 
 app.on("window-all-closed", () => {
@@ -130,7 +136,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) mainWin = createWindow();
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
 app.on("before-quit", () => {

@@ -1,55 +1,59 @@
 @echo off
-title herama launcher
+chcp 65001 >nul 2>&1
+title herama
 cd /d "%~dp0"
 
 echo.
-echo  ◈  herama
-echo  ──────────────────────────────
+echo  herama - starting...
 echo.
 
-:: ── Python check ──────────────────────────────────────────────────────────────
+:: Python check
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo  [ERROR] Python is not installed or not in PATH.
-    echo  Download from: https://www.python.org/downloads/
-    echo  Make sure to check "Add Python to PATH" during installation.
+    echo [ERROR] Python not found. Install from https://www.python.org/downloads/
+    echo         Make sure to check "Add Python to PATH"
     pause
     exit /b 1
 )
 
-:: ── Node.js check ─────────────────────────────────────────────────────────────
+:: Node check
 node --version >nul 2>&1
 if errorlevel 1 (
-    echo  [ERROR] Node.js is not installed or not in PATH.
-    echo  Download from: https://nodejs.org/
+    echo [ERROR] Node.js not found. Install from https://nodejs.org/
     pause
     exit /b 1
 )
 
-:: ── Install Python dependencies (skip if already installed) ───────────────────
-echo  Installing Python dependencies...
-python -m pip install -r requirements.txt --quiet --disable-pip-version-check
+:: Python deps
+echo Installing Python dependencies...
+python -m pip install -r requirements.txt -q --disable-pip-version-check
 if errorlevel 1 (
-    echo  [ERROR] Failed to install Python dependencies.
+    echo [ERROR] pip install failed. Check requirements.txt
     pause
     exit /b 1
 )
 
-:: ── Install Node dependencies ─────────────────────────────────────────────────
+:: Node deps
 cd frontend
 if not exist node_modules (
-    echo  Installing Node dependencies (first run only, may take a minute)...
-    npm install --silent
+    echo Installing Node.js dependencies (first run only)...
+    npm install
     if errorlevel 1 (
-        echo  [ERROR] Failed to install Node dependencies.
+        echo [ERROR] npm install failed.
         pause
         exit /b 1
     )
 )
 
-:: ── Launch app ────────────────────────────────────────────────────────────────
-echo  Launching herama...
+:: Launch
+echo.
+echo Launching herama...
 echo.
 npm run dev
+if errorlevel 1 (
+    echo.
+    echo [ERROR] App exited with an error. See above for details.
+    pause
+)
 
 cd ..
