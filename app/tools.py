@@ -39,6 +39,14 @@ class ToolError(Exception):
     """A problem the model should see and can react to."""
 
 
+class NeedsAccess(ToolError):
+    """The path is outside the folders granted so far; the app can ask the user and retry."""
+
+    def __init__(self, folder: str, write: bool):
+        super().__init__(f"{folder} is not in the allowed folders yet; the user has to approve {'changes in' if write else 'reading'} it")
+        self.folder, self.write = folder, write
+
+
 @dataclass
 class Tool:
     name: str
@@ -57,7 +65,9 @@ class Tool:
 
 @dataclass
 class Ctx:
-    dirs: list[Path]
+    dirs: list[Path]                                       # read and write
+    read_dirs: list[Path] = field(default_factory=list)    # read only (paths the user mentioned or approved)
+    computer: bool = False                                 # the user approved searching the whole computer
 
 
 REGISTRY: dict[str, Tool] = {}
@@ -87,25 +97,54 @@ def workspace() -> Path:
     return p
 
 
-def make_ctx(dirs: list[str] | None) -> Ctx:
-    found = [Path(d).expanduser().resolve() for d in (dirs or []) if d and Path(d).expanduser().is_dir()]
-    return Ctx(found or [workspace().resolve()])
+def _paths(items: list[str] | None) -> list[Path]:
+    out = []
+    for d in items or []:
+        try:
+            p = Path(d).expanduser()
+            if d and p.exists():
+                out.append(p.resolve())
+        except (OSError, RuntimeError):
+            continue
+    return out
+
+
+def make_ctx(dirs: list[str] | None, read_dirs: list[str] | None = None, computer: bool = False) -> Ctx:
+    found = [d for d in _paths(dirs) if d.is_dir()]
+    return Ctx(found or [workspace().resolve()], _paths(read_dirs), computer)
 
 
 def _inside(p: Path, root: Path) -> bool:
     return p == root or root in p.parents
 
 
-def safe(ctx: Ctx, path: str, must_exist: bool = True) -> Path:
-    """Resolve `path` (relative paths start in the first allowed folder) and refuse anything outside the allowed folders."""
+SENSITIVE_DIRS = {".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".password-store"}
+SENSITIVE_FILES = re.compile(r"^(id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|pfx|p12|kdbx)|login data|cookies|web data|\.netrc|credentials(\.json)?)$", re.I)
+
+
+def _sensitive(p: Path) -> bool:
+    return any(part.lower() in SENSITIVE_DIRS for part in p.parts) or bool(SENSITIVE_FILES.match(p.name))
+
+
+def safe(ctx: Ctx, path: str, must_exist: bool = True, write: bool = False) -> Path:
+    """Resolve `path` (relative paths start in the first allowed folder).
+
+    Reading works in the allowed and read-only folders, changes only in the allowed ones; anything else
+    raises NeedsAccess so the app can ask the user. Credential files and folders are always refused."""
     if not path:
         raise ToolError("path is required")
     p = Path(path).expanduser()
     if not p.is_absolute():
         p = ctx.dirs[0] / p
     p = p.resolve()
-    if not any(_inside(p, d) for d in ctx.dirs):
-        raise ToolError(f"{p} is outside the allowed folders: {', '.join(str(d) for d in ctx.dirs)}")
+    if _sensitive(p):
+        raise ToolError(f"{p.name} looks like a credentials file or folder, so it is blocked")
+    roots = ctx.dirs if write else ctx.dirs + ctx.read_dirs
+    if not any(_inside(p, d) for d in roots):
+        anchor = p if p.is_dir() else p.parent
+        while not anchor.exists() and anchor != anchor.parent:
+            anchor = anchor.parent
+        raise NeedsAccess(str(anchor), write)
     if must_exist and not p.exists():
         raise ToolError(f"{p} does not exist")
     return p
@@ -131,9 +170,10 @@ def _fmt_size(n: int) -> str:
 
 # ── files ─────────────────────────────────────────────────────────────────────
 
-@tool("workspace_folders", "Files", "read", "List the folders you are allowed to use. Relative paths start in the first one.")
+@tool("workspace_folders", "Files", "read", "List the folders you can use now. Relative paths start in the first one. Other folders need the user's approval, which is asked automatically when you try them.")
 def _workspace_folders(a, ctx):
-    return "\n".join(str(d) for d in ctx.dirs)
+    out = [f"{d}  (read and write)" for d in ctx.dirs] + [f"{d}  (read only)" for d in ctx.read_dirs]
+    return "\n".join(out)
 
 
 @tool("list_files", "Files", "read", "List the files and sub-folders of a folder, with file sizes.",
@@ -192,7 +232,7 @@ def _read_image(a, ctx):
 @tool("write_file", "Files", "write", "Create a file or replace it completely. Missing folders are created.",
       {"path": S, "content": S}, ["path", "content"])
 def _write_file(a, ctx):
-    p = safe(ctx, a["path"], must_exist=False)
+    p = safe(ctx, a["path"], must_exist=False, write=True)
     if p.is_dir():
         raise ToolError(f"{p} is a folder")
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -205,7 +245,7 @@ def _write_file(a, ctx):
       {"path": S, "edits": _arr({"type": "object", "properties": {"old": S, "new": S}, "required": ["old", "new"]}), "dry_run": B},
       ["path", "edits"])
 def _edit_file(a, ctx):
-    p = safe(ctx, a["path"])
+    p = safe(ctx, a["path"], write=not a.get("dry_run"))
     before = _read_text(p)
     text = before
     for i, e in enumerate(a["edits"], 1):
@@ -221,14 +261,14 @@ def _edit_file(a, ctx):
 
 @tool("make_folder", "Files", "write", "Create a folder (and any missing parent folders).", {"path": S}, ["path"])
 def _make_folder(a, ctx):
-    p = safe(ctx, a["path"], must_exist=False)
+    p = safe(ctx, a["path"], must_exist=False, write=True)
     p.mkdir(parents=True, exist_ok=True)
     return f"Folder ready: {p}"
 
 
 @tool("copy_path", "Files", "write", "Copy a file or folder to a new place.", {"source": S, "destination": S}, ["source", "destination"])
 def _copy_path(a, ctx):
-    src, dst = safe(ctx, a["source"]), safe(ctx, a["destination"], must_exist=False)
+    src, dst = safe(ctx, a["source"]), safe(ctx, a["destination"], must_exist=False, write=True)
     if dst.exists():
         raise ToolError(f"{dst} already exists")
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -238,7 +278,7 @@ def _copy_path(a, ctx):
 
 @tool("move_path", "Files", "write", "Move or rename a file or folder.", {"source": S, "destination": S}, ["source", "destination"])
 def _move_path(a, ctx):
-    src, dst = safe(ctx, a["source"]), safe(ctx, a["destination"], must_exist=False)
+    src, dst = safe(ctx, a["source"], write=True), safe(ctx, a["destination"], must_exist=False, write=True)
     if dst.exists():
         raise ToolError(f"{dst} already exists")
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -248,8 +288,8 @@ def _move_path(a, ctx):
 
 @tool("delete_path", "Files", "write", "Delete a file or folder. It is moved to the trash folder, so it can be restored.", {"path": S}, ["path"])
 def _delete_path(a, ctx):
-    p = safe(ctx, a["path"])
-    if p in ctx.dirs:
+    p = safe(ctx, a["path"], write=True)
+    if p in ctx.dirs or p in ctx.read_dirs:
         raise ToolError("an allowed folder itself cannot be deleted")
     trash = config.ROOT / ".trash" / time.strftime("%Y%m%d-%H%M%S")
     trash.mkdir(parents=True, exist_ok=True)
@@ -326,6 +366,80 @@ def _search_in_files(a, ctx):
                 if len(out) >= 100:
                     return "\n".join(out) + "\n[more matches not shown]"
     return "\n".join(out) or "No matches."
+
+
+SYSTEM_SKIP = {"windows", "program files", "program files (x86)", "programdata", "$recycle.bin", "system volume information",
+               "appdata", "library", "proc", "sys", "dev", "run", "snap", "node_modules", ".git", "__pycache__", ".cache",
+               ".venv", "venv", "site-packages", ".trash", "$windows.~bt", "recovery"}
+TEXT_EXT = {".txt", ".md", ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".csv", ".html", ".css", ".yml", ".yaml", ".toml", ".xml",
+            ".log", ".ini", ".cfg", ".c", ".cpp", ".h", ".java", ".go", ".rs", ".sh", ".bat", ".ps1", ".sql", ".rtf", ".tex"}
+SEARCH_SECONDS = 20
+
+
+def search_roots(all_drives: bool) -> list[Path]:
+    """Where "search my computer" looks: the user's own folders, or every drive when asked."""
+    home = Path.home()
+    if all_drives:
+        if platform.system() == "Windows":
+            import string
+            return [Path(f"{c}:\\") for c in string.ascii_uppercase if Path(f"{c}:\\").exists()]
+        return [Path("/")]
+    names = ["Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music", "OneDrive", "Projects", "source", "dev", "work"]
+    roots = [home / n for n in names if (home / n).is_dir()]
+    return roots or [home]
+
+
+@tool("search_computer", "Files", "read",
+      "Search the user's computer for files by name, or by words inside text files (content=true). Looks in Desktop, Documents, Downloads and similar folders; "
+      "set all_drives=true to look everywhere. Returns paths, newest first. Then use read_file on a result. The user is asked to approve the first search.",
+      {"query": S, "content": B, "all_drives": B, "folder": S}, ["query"])
+def _search_computer(a, ctx):
+    if not ctx.computer:
+        raise NeedsAccess("*computer*", False)
+    q = a["query"].lower().strip()
+    if not q:
+        raise ToolError("query is empty")
+    glob = any(c in q for c in "*?[")
+    roots = [safe(ctx, a["folder"])] if a.get("folder") else search_roots(bool(a.get("all_drives")))
+    deadline = time.time() + SEARCH_SECONDS
+    hits: list[tuple[float, str, int]] = []
+    scanned, timed_out = 0, False
+    for root in roots:
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d.lower() not in SYSTEM_SKIP and not d.startswith(".") and not _sensitive(Path(dirpath) / d)]
+            for f in files:
+                scanned += 1
+                full = Path(dirpath) / f
+                if time.time() > deadline:
+                    timed_out = True
+                    break
+                if _sensitive(full):
+                    continue
+                if a.get("content"):
+                    if full.suffix.lower() not in TEXT_EXT:
+                        continue
+                    try:
+                        if full.stat().st_size > 1_000_000:
+                            continue
+                        if q not in full.read_bytes().decode("utf-8", "replace").lower():
+                            continue
+                    except OSError:
+                        continue
+                elif not (fnmatch.fnmatch(f.lower(), q) if glob else q in f.lower()):
+                    continue
+                try:
+                    st = full.stat()
+                    hits.append((st.st_mtime, str(full), st.st_size))
+                except OSError:
+                    continue
+            if timed_out or len(hits) >= 400:
+                break
+        if timed_out or len(hits) >= 400:
+            break
+    hits.sort(reverse=True)
+    lines = [f"{p}  ({_fmt_size(sz)}, {datetime.fromtimestamp(m).strftime('%Y-%m-%d')})" for m, p, sz in hits[:100]]
+    note = f"\n[scanned {scanned} files{', stopped after ' + str(SEARCH_SECONDS) + 's - narrow the search' if timed_out else ''}]"
+    return ("\n".join(lines) or "No matches.") + note
 
 
 @tool("file_info", "Files", "read", "Size, type and dates of a file or folder.", {"path": S}, ["path"])
@@ -441,7 +555,7 @@ def _open_url(a, ctx):
 
 @tool("download_file", "Web", "write", "Download a file from the web into an allowed folder.", {"url": S, "path": S}, ["url", "path"])
 def _download_file(a, ctx):
-    dest = safe(ctx, a["path"], must_exist=False)
+    dest = safe(ctx, a["path"], must_exist=False, write=True)
     raw, _ = _fetch(a["url"], limit=50_000_000, timeout=60)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(raw)
@@ -453,7 +567,7 @@ def _download_file(a, ctx):
 @tool("run_command", "Shell", "exec", "Run a shell command inside an allowed folder and return its output. Stops after `timeout` seconds (default 60).",
       {"command": S, "folder": S, "timeout": I}, ["command"])
 def _run_command(a, ctx):
-    cwd = safe(ctx, a.get("folder") or ".")
+    cwd = safe(ctx, a.get("folder") or ".", write=True)
     try:
         r = subprocess.run(a["command"], shell=True, cwd=cwd, capture_output=True, text=True, errors="replace",
                            timeout=max(1, min(int(a.get("timeout") or 60), 600)),
@@ -616,14 +730,19 @@ def listing() -> list[dict]:
              "client": t in CLIENT_TOOLS} for t in REGISTRY.values()]
 
 
-def run(name: str, args: dict, dirs: list[str] | None = None) -> dict:
-    """Run one tool. Returns {"ok": bool, "result": str}; problems come back as text for the model to read."""
+def run(name: str, args: dict, dirs: list[str] | None = None, read_dirs: list[str] | None = None, computer: bool = False) -> dict:
+    """Run one tool. Returns {"ok": bool, "result": str}; problems come back as text for the model to read.
+
+    When the tool needs a folder nobody approved yet, the answer also has "needs_access": {"folder", "write"}."""
     t = REGISTRY.get(name)
     if t is None or t in CLIENT_TOOLS:
         return {"ok": False, "result": f"unknown tool: {name}"}
+    extra: dict = {}
     try:
-        out = t.fn(args if isinstance(args, dict) else {}, make_ctx(dirs))
+        out = t.fn(args if isinstance(args, dict) else {}, make_ctx(dirs, read_dirs, computer))
         ok = True
+    except NeedsAccess as e:
+        out, ok, extra = str(e), False, {"needs_access": {"folder": e.folder, "write": e.write}}
     except ToolError as e:
         out, ok = str(e), False
     except KeyError as e:
@@ -631,4 +750,4 @@ def run(name: str, args: dict, dirs: list[str] | None = None) -> dict:
     except Exception as e:  # a bug or OS error inside a tool must not break the chat
         out, ok = f"{type(e).__name__}: {e}", False
     out = str(out)
-    return {"ok": ok, "result": out[:MAX_RESULT] + ("\n[output truncated]" if len(out) > MAX_RESULT else "")}
+    return {"ok": ok, "result": out[:MAX_RESULT] + ("\n[output truncated]" if len(out) > MAX_RESULT else ""), **extra}

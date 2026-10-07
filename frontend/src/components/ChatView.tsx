@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Safety, Agent, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune, loadTools, runTool } from "../api";
-import type { ChatMsg, ModelState, ToolCall, ToolInfo } from "../api";
-import { TOOL_GROUPS, activeTools, matchGroups } from "../toolRouting";
+import type { ChatMsg, ModelState, ToolCall, ToolInfo, ToolResult } from "../api";
+import { TOOL_GROUPS, activeTools, extractPaths, matchGroups } from "../toolRouting";
 import { projectContext, projectFolders, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
@@ -32,7 +32,8 @@ const MAX_ROUNDS = 10;
 const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory or Utilities), call use_tools to switch it on. " +
   "Use tools when they help, and never claim you did something you did not do with a tool. " +
   "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
-  "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets.";
+  "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets. " +
+  "To find something on the user's computer use search_computer, then read_file; to analyze a folder start with folder_tree. Folders outside the project ask the user for approval automatically.";
 
 const allowedBySafety = (t: ToolInfo, safety: Safety) =>
   safety === "off" ? false : safety === "plan" ? ["read", "net", "memory", "ui"].includes(t.kind) : true;
@@ -75,6 +76,8 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  // Access the user approved during this conversation: extra read-only folders, extra writable folders, whole-computer search.
+  const grants = useRef({ read: [] as string[], write: [] as string[], computer: false });
   const model = agent?.model || state.activeModel;
   const ready = state.connected && !!model;
 
@@ -138,11 +141,29 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
     const inherited = conv.messages.slice(Math.max(0, lastUser)).filter(m => m.role === "tool")
       .map(m => all.find(t => t.name === (m.toolLabel ?? "").split(/\s/)[0])?.group).filter((g): g is string => !!g);
     const active = new Set<string>([...matchGroups(text), ...inherited]);
+    const mentioned = extractPaths(text);   // paths the user wrote are theirs to share: read access without asking
+    grants.current.read = [...new Set([...grants.current.read, ...mentioned])];
     const pick = () => activeTools(all, active).filter(t => allowedBySafety(t, state.safety));
     if (all.some(t => allowedBySafety(t, state.safety))) {
       if (messages[0]?.role === "system") messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${TOOLS_HINT}` };
       else messages.unshift({ role: "system", content: TOOLS_HINT });
+      if (mentioned.length) messages[0] = { ...messages[0], content: `${messages[0].content}\n\nThe user gave these paths (you can read them): ${mentioned.join("; ")}` };
     }
+
+    const execWithAccess = async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
+      const go = () => runTool(name, args, [...dirs, ...grants.current.write], grants.current.read, grants.current.computer);
+      const res = await go();
+      const na = res.needs_access;
+      if (!na) return res;
+      const what = na.folder === "*computer*" ? "search the files on your computer" : na.write ? `change files in ${na.folder}` : `read files in ${na.folder}`;
+      // Auto mode shares read access freely; changing files outside the project is always confirmed.
+      if (!((state.safety === "auto" && !na.write) || window.confirm(`Allow the agent to ${what}?`))) {
+        return { ok: false, result: `The user did not allow the agent to ${what}.` };
+      }
+      if (na.folder === "*computer*") grants.current.computer = true;
+      else (na.write ? grants.current.write : grants.current.read).push(na.folder);
+      return go();
+    };
 
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -175,7 +196,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
           turn.push({ id: rid(), role: "tool", content: "", ts: Date.now(), toolLabel: toolLabel(name, args), toolStatus: "running" });
           render();
           const row = turn.length - 1;
-          let result: { ok: boolean; result: string };
+          let result: ToolResult;
           if (!info) result = { ok: false, result: `unknown tool: ${name}` };
           else if (state.safety === "ask" && (info.kind === "write" || info.kind === "exec")
             && !window.confirm(`Allow the agent to run this?\n\n${toolLabel(name, args)}\n\n${JSON.stringify(args, null, 2).slice(0, 800)}`)) {
@@ -192,7 +213,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
           } else if (name === "update_plan") {
             result = updatePlan(args.steps);
           } else {
-            result = await runTool(name, args, dirs);
+            result = await execWithAccess(name, args);
           }
           patchAt(row, { toolStatus: result.ok ? "done" : "error", content: result.result });
           messages.push({ role: "tool", tool_call_id: call.id, content: result.result });

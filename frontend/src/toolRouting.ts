@@ -10,7 +10,8 @@ const PATTERNS: Record<ToolGroup, RegExp> = {
     "\\b(files?|folders?|director(y|ies)|paths?|readme|repo(sitory)?|code|scripts?|program|function|project|workspace)",
     "\\.(py|js|ts|tsx|jsx|json|md|txt|csv|html|css|ya?ml|toml|xml|log|pdf|docx?|xlsx?|png|jpe?g)\\b",
     "(^|[^a-z])[a-z]:(\\\\|/(?!/))", "(^|\\s)\\.{0,2}/[\\w.-]+/",
-    "ملف|مجلد|دليل|مسار|كود|سكربت|برنامج|دال[هة]|مشروع|ريبو",
+    "\\b(my (computer|pc|laptop|machine)|drives?|disk|desktop|documents|downloads|home folder)\\b|(^|\\s)~/",
+    "ملف|مجلد|دليل|مسار|كود|سكربت|برنامج|دال[هة]|مشروع|ريبو|جهازي|حاسوبي|الكمبيوتر|الحاسوب|الجهاز|سطح المكتب|المستندات|التنزيلات|التحميلات",
   ].join("|"), "i"),
   Web: new RegExp([
     "\\b(search|google|look ?up|browse|online|internet|web|website|url|https?:|www\\.|news|latest|download|weather)",
@@ -27,7 +28,7 @@ const PATTERNS: Record<ToolGroup, RegExp> = {
   ].join("|"), "i"),
   Utilities: new RegExp([
     "\\b(time|date|today|tomorrow|yesterday|calculate|calc|math|percent|convert|how much|how many|specs?|gpu|cpu|ram|disk)\\b",
-    "الوقت|الساعه|التاريخ|اليوم|غدا|احسب|حساب|كم يساوي|حول|مواصفات|جهازي|كرت|معالج|رام",
+    "الوقت|الساعه|التاريخ|اليوم|غدا|احسب|حساب|كم يساوي|حول|مواصفات|كرت|معالج|رام",
   ].join("|"), "i"),
 };
 
@@ -50,4 +51,16 @@ export const PLANNING_GROUPS: ToolGroup[] = ["Files", "Web", "Shell", "Skills"];
 export function activeTools<T extends { name: string; group: string; kind: string }>(all: T[], active: Set<string>): T[] {
   const planning = PLANNING_GROUPS.some(g => active.has(g));
   return all.filter(t => t.kind === "ui" ? (t.name !== "update_plan" || planning) : active.has(t.group));
+}
+
+const trim = (p: string) => p.replace(/[\s.,;:!?)\]}،؛؟"'`“”]+$/, "");
+
+/** Absolute file or folder paths written in a message (Windows, Unix or ~/...), quoted or not. */
+export function extractPaths(text: string): string[] {
+  const found = new Set<string>();
+  for (const m of text.matchAll(/["'`“”‘’]([A-Za-z]:(?:\\|\/(?!\/))[^"'`“”‘’\n]+|~?\/[^"'`“”‘’\n]+)["'`“”‘’]/g)) found.add(trim(m[1]));
+  for (const m of text.matchAll(/(?<![A-Za-z0-9])([A-Za-z]:(?:\\|\/(?!\/))[^\s"'`<>|?*]+)/g)) found.add(trim(m[1]));
+  for (const m of text.matchAll(/(?:^|[\s("'`])((?:~\/[\w.@%+\-]+|\/[\w.@%+\-]+(?:\/[\w.@%+\-]+)+)(?:\/[\w.@%+\-]+)*)/g)) found.add(trim(m[1]));
+  const all = [...found].filter(p => p.length > 2);
+  return all.filter(p => !all.some(q => q !== p && q.startsWith(p)));  // a quoted path with spaces also yields its first word
 }

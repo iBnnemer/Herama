@@ -63,12 +63,15 @@ export function loadTools(): Promise<ToolInfo[]> {
   return toolCache;
 }
 
-export async function runTool(name: string, args: Record<string, unknown>, dirs: string[]): Promise<{ ok: boolean; result: string }> {
+export interface ToolResult { ok: boolean; result: string; needs_access?: { folder: string; write: boolean } }
+
+export async function runTool(name: string, args: Record<string, unknown>, dirs: string[], readDirs: string[] = [], computer = false): Promise<ToolResult> {
   try {
     const r = await fetch(`${BASE}/api/tools/run`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, arguments: args, dirs }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, arguments: args, dirs, read_dirs: readDirs, computer }),
     });
-    return r.ok ? await r.json() : { ok: false, result: `tool request failed (${r.status})` };
+    return r.ok ? await r.json() as ToolResult : { ok: false, result: `tool request failed (${r.status})` };
   } catch (e) {
     return { ok: false, result: String(e) };
   }

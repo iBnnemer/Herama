@@ -36,13 +36,56 @@ def test_dry_run_changes_nothing(tmp_path, d):
     assert (tmp_path / "x.txt").read_text() == "one"
 
 
-def test_paths_outside_allowed_folders_are_refused(tmp_path, d):
+def test_paths_outside_ask_for_access(tmp_path, d):
     outside = tmp_path.parent / "outside.txt"
     outside.write_text("secret")
     for p in (str(outside), "../outside.txt"):
         r = run("read_file", {"path": p}, d)
-        assert not r["ok"] and "outside" in r["result"]
-    assert not run("write_file", {"path": "../evil.txt", "content": "x"}, d)["ok"]
+        assert not r["ok"] and r["needs_access"] == {"folder": str(tmp_path.parent.resolve()), "write": False}
+    r = run("write_file", {"path": "../evil.txt", "content": "x"}, d)
+    assert not r["ok"] and r["needs_access"]["write"] is True
+    assert not (tmp_path.parent / "evil.txt").exists()
+
+
+def test_read_dirs_are_read_only(tmp_path, d):
+    other = tmp_path.parent / "other_area"
+    other.mkdir(exist_ok=True)
+    (other / "notes.txt").write_text("analyze me")
+    r = tools.run("read_file", {"path": str(other / "notes.txt")}, d, [str(other)])
+    assert r == {"ok": True, "result": "analyze me"}
+    r = tools.run("write_file", {"path": str(other / "n2.txt"), "content": "x"}, d, [str(other)])
+    assert not r["ok"] and r["needs_access"]["write"] is True
+    # a single file can be granted too
+    r = tools.run("read_file", {"path": str(other / "notes.txt")}, d, [str(other / "notes.txt")])
+    assert r["ok"]
+    assert "(read only)" in tools.run("workspace_folders", {}, d, [str(other)])["result"]
+
+
+def test_credential_files_are_always_blocked(tmp_path, d):
+    ssh = tmp_path / ".ssh"
+    ssh.mkdir()
+    (ssh / "id_rsa").write_text("KEY")
+    (tmp_path / "server.pem").write_text("KEY")
+    for p in (".ssh/id_rsa", "server.pem"):
+        r = run("read_file", {"path": p}, d)
+        assert not r["ok"] and "blocked" in r["result"] and "needs_access" not in r
+
+
+def test_search_computer_needs_approval_then_finds_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(tools, "search_roots", lambda all_drives: [tmp_path])
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "budget_2026.xlsx").write_text("x")
+    (tmp_path / "docs" / "notes.txt").write_text("the quarterly BUDGET review")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "budget_skip.txt").write_text("budget")
+    r = tools.run("search_computer", {"query": "budget"}, [str(tmp_path)])
+    assert not r["ok"] and r["needs_access"]["folder"] == "*computer*"
+    r = tools.run("search_computer", {"query": "budget"}, [str(tmp_path)], computer=True)
+    assert r["ok"] and "budget_2026.xlsx" in r["result"] and "budget_skip" not in r["result"]
+    r = tools.run("search_computer", {"query": "budget", "content": True}, [str(tmp_path)], computer=True)
+    assert "notes.txt" in r["result"] and "budget_2026" not in r["result"]
+    r = tools.run("search_computer", {"query": "*.xlsx"}, [str(tmp_path)], computer=True)
+    assert "budget_2026.xlsx" in r["result"]
 
 
 def test_symlink_escape_is_refused(tmp_path, d):
@@ -98,7 +141,7 @@ def test_run_command_in_allowed_folder(tmp_path, d):
 
 def test_default_workspace_when_no_folders(tmp_path, monkeypatch):
     monkeypatch.setattr(tools.config, "ROOT", tmp_path)
-    assert run("workspace_folders", {}, [])["result"] == str((tmp_path / "workspace").resolve())
+    assert run("workspace_folders", {}, [])["result"] == f"{(tmp_path / 'workspace').resolve()}  (read and write)"
 
 
 def test_missing_argument_is_reported(d):
