@@ -367,7 +367,7 @@ export default function App() {
             onSafetyChange={v => setState(s => ({ ...s, safety: v }))}
             projects={projects}
             modelState={modelState}
-            onManageModels={() => { setSettingsTarget("providers/local"); setView("settings"); }}
+            onManageModels={() => { setSettingsTarget(`providers/local@${Date.now()}`); setView("settings"); }}
             onTps={t => setState(s => ({ ...s, tps: t }))}
             taskApi={taskApi}
           />

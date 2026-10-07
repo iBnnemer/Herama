@@ -150,7 +150,7 @@ export default function SettingsPage(p: Props) {
   const [confirmClear, setConfirmClear] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   const { state } = p;
-  useEffect(() => { if (p.target) setSel(p.target); }, [p.target]);
+  useEffect(() => { if (p.target) setSel(p.target.split("@")[0]); }, [p.target]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); search.current?.focus(); } };
