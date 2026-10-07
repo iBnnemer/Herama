@@ -1,7 +1,7 @@
 export type IconName =
   | "sidebar" | "tasks" | "plan" | "browser" | "terminal" | "files"
   | "gear" | "send" | "chevron" | "close"
-  | "search" | "pin" | "plus" | "trash" | "bolt" | "message" | "box" | "clock" | "clip" | "stop" | "bulb" | "shield" | "gauge" | "sun" | "moon" | "copy" | "reply" | "edit" | "smile" | "check";
+  | "search" | "pin" | "plus" | "trash" | "bolt" | "message" | "box" | "clock" | "clip" | "stop" | "bulb" | "shield" | "gauge" | "sun" | "moon" | "back" | "forward" | "reload" | "home" | "copy" | "reply" | "edit" | "smile" | "check";
 
 const PATHS: Record<IconName, JSX.Element> = {
   sidebar: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
@@ -28,6 +28,10 @@ const PATHS: Record<IconName, JSX.Element> = {
   gauge: <><path d="M4 17a8 8 0 1 1 16 0" /><path d="M12 17l4-5" /></>,
   sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5" /></>,
   moon: <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" />,
+  back: <path d="M19 12H5M11 6l-6 6 6 6" />,
+  forward: <path d="M5 12h14M13 6l6 6-6 6" />,
+  reload: <path d="M20 12a8 8 0 1 1-2.5-5.800M20 4v5h-5" />,
+  home: <path d="M4 11l8-7 8 7M6 10v10h4v-6h4v6h4V10" />,
   copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h8" /></>,
   reply: <path d="M10 8L4 13l6 5v-3.5c5 0 8 1.5 10 5-.5-5.500-4-9-10-9.500z" />,
   edit: <path d="M4 20h4L19 9l-4-4L4 16zM13.500 6.500l4 4" />,
