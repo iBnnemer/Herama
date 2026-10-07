@@ -2,10 +2,11 @@ import logging
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import config
-from app.api import memory, ollama, skills
+from app.api import agents, memory, ollama, skills
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +50,10 @@ def health():
 app.include_router(ollama.router)
 app.include_router(memory.router)
 app.include_router(skills.router)
+app.include_router(agents.router)
+
+# added last so it is the outermost layer and answers preflight before auth
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 def main():
