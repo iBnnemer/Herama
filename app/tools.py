@@ -15,6 +15,7 @@ import platform
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import time
 import urllib.error
@@ -593,16 +594,30 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _fetch(url: str, limit: int = 2_000_000, data: bytes | None = None, timeout: int = 20, headers: dict | None = None) -> tuple[bytes, str]:
+def _fetch(url: str, limit: int = 2_000_000, data: bytes | None = None, timeout: int = 20, headers: dict | None = None,
+           retries: int = 2) -> tuple[bytes, str]:
+    """Download a page. Timeouts, 429 and 5xx answers are retried with a growing pause (1 s, 2 s)."""
     _check_public(url)
     opener = urllib.request.build_opener(_Redirects)
-    try:
-        with opener.open(urllib.request.Request(url, data=data, headers={**_UA, **(headers or {})}), timeout=timeout) as r:
-            return r.read(limit), r.headers.get("Content-Type", "")
-    except urllib.error.HTTPError as e:
-        raise ToolError(f"the site answered {e.code}") from None
-    except (urllib.error.URLError, OSError) as e:
-        raise ToolError(f"could not reach the site: {e}") from None
+    for attempt in range(retries + 1):
+        try:
+            with opener.open(urllib.request.Request(url, data=data, headers={**_UA, **(headers or {})}), timeout=timeout) as r:
+                return r.read(limit), r.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as e:
+            if (e.code == 429 or e.code >= 500) and attempt < retries:
+                time.sleep(1 + attempt)
+                continue
+            raise ToolError(f"the site answered {e.code}") from None
+        except ssl.SSLError as e:
+            raise ToolError(f"secure connection failed ({e}); a firewall or antivirus may be inspecting HTTPS") from None
+        except (urllib.error.URLError, OSError) as e:
+            if isinstance(getattr(e, "reason", None), ssl.SSLError):
+                raise ToolError(f"secure connection failed ({e.reason}); a firewall or antivirus may be inspecting HTTPS") from None
+            if attempt < retries:
+                time.sleep(1 + attempt)
+                continue
+            raise ToolError(f"could not reach the site: {e}") from None
+    raise ToolError("could not reach the site")
 
 
 def parse_search(html: str, limit: int) -> list[dict]:
