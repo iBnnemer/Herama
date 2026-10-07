@@ -1,8 +1,10 @@
 """
 Plug-and-Play dependency automation.
 
-ensure_package(name) — checks whether a package is importable; if not,
-installs it via pip in a background thread and updates requirements.txt.
+ensure_package(name)   — install if missing, blocking until done.
+ensure_packages([...]) — parallel install of a list.
+upgrade_packages_async([...]) — fire-and-forget upgrade to latest stable;
+                                 called automatically by the GUI on startup.
 
 The call blocks only until the install is *complete* (it joins the thread),
 so callers that already run in a background thread (skills sandbox, hf_manager)
@@ -17,6 +19,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Callable
 
 log = logging.getLogger("herama.deps")
 
@@ -144,6 +147,46 @@ def _install(package_name: str, mod_name: str) -> bool:
     log.info("Installed %s==%s", package_name, version)
     _append_to_requirements(package_name, version)
     return True
+
+
+def upgrade_packages_async(
+    packages: list[str | tuple[str, str]],
+    done_cb: Callable[[dict[str, bool]], None] | None = None,
+) -> threading.Thread:
+    """
+    Silently upgrade *packages* to their latest stable versions in the
+    background.  Each element may be a plain package name or a
+    (package_name, import_name) tuple.  Calls ``done_cb(results)`` when
+    all upgrades finish.  Never blocks the caller.
+    """
+    def _worker():
+        results: dict[str, bool] = {}
+        for item in packages:
+            pkg = item[0] if isinstance(item, tuple) else item
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--upgrade",
+                     "--quiet", pkg],
+                    capture_output=True, text=True, timeout=120,
+                )
+                success = result.returncode == 0
+                if success:
+                    importlib.invalidate_caches()
+                    ver = _installed_version(pkg) or "unknown"
+                    log.info("Upgraded %s → %s", pkg, ver)
+                    _append_to_requirements(pkg, ver)
+                else:
+                    log.warning("Upgrade failed for %s: %s", pkg, result.stderr[:200])
+                results[pkg] = success
+            except Exception as exc:
+                log.warning("Upgrade exception for %s: %s", pkg, exc)
+                results[pkg] = False
+        if done_cb:
+            done_cb(results)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return t
 
 
 def _append_to_requirements(package_name: str, version: str) -> None:
