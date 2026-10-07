@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Agent, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
+import type { Agent, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune } from "../api";
 import type { ChatMsg } from "../api";
-import { rid, splitThink } from "../util";
+import { projectContext, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
 
 interface Props {
   conv: Conversation;
   agent?: Agent;
+  project?: Project;
   state: AppState;
   onConvUpdate: (id: string, patch: Partial<Conversation>) => void;
   onModelChange: (m: string) => void;
@@ -25,8 +26,8 @@ const HISTORY_LIMIT = 40;
 const b64 = (dataUrl: string) => dataUrl.slice(dataUrl.indexOf(",") + 1);
 
 /** Drop the oldest messages until the conversation fits ~75% of the context (rough 2.5 chars per token). */
-function fitToContext(msgs: Message[], ctx: number): Message[] {
-  const budget = ctx * 0.75 * 2.5;
+function fitToContext(msgs: Message[], ctx: number, reserved = 0): Message[] {
+  const budget = Math.max(1000, ctx * 0.75 * 2.5 - reserved);
   let used = 0;
   const kept: Message[] = [];
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -39,7 +40,7 @@ function fitToContext(msgs: Message[], ctx: number): Message[] {
   return kept;
 }
 
-export default function ChatView({ conv, agent, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onTps, taskApi }: Props) {
+export default function ChatView({ conv, agent, project, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -72,13 +73,14 @@ export default function ChatView({ conv, agent, state, onConvUpdate, onModelChan
         messages: [...base, { id: asstId, role: "assistant", content: body, ts: asstTs, streaming: live }],
       });
 
+    const system = [agent?.system_prompt, projectContext(project, state.contextLength)].filter(Boolean).join("\n\n");
     const history: ChatMsg[] = fitToContext(base
       .filter(m => m.role !== "tool")
-      .slice(-HISTORY_LIMIT), state.contextLength)
+      .slice(-HISTORY_LIMIT), state.contextLength, system.length)
       .map(m => ({ role: m.role as "user" | "assistant", content: m.role === "assistant" ? splitThink(m.content).answer : m.content }));
     if (imgs.length) history[history.length - 1].images = imgs.map(a => b64(a.dataUrl!));
-    const messages: ChatMsg[] = agent?.system_prompt
-      ? [{ role: "system", content: agent.system_prompt }, ...history]
+    const messages: ChatMsg[] = system
+      ? [{ role: "system", content: system }, ...history]
       : history;
 
     const ctrl = new AbortController();
@@ -118,7 +120,7 @@ export default function ChatView({ conv, agent, state, onConvUpdate, onModelChan
       show(full, false);
       setStreaming(false);
     }
-  }, [model, state.effort, state.contextLength, state.tune, conv, agent, onConvUpdate, onTps, taskApi]);
+  }, [model, state.effort, state.contextLength, state.tune, conv, agent, project, onConvUpdate, onTps, taskApi]);
 
   const submit = (text: string, atts: Attachment[]) => {
     if (streaming) setQueue(q => [...q, { text, atts }]);

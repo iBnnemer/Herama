@@ -50,6 +50,7 @@ export default function App() {
   const [jobs, setJobs] = usePersistent<Job[]>("herama.jobs", []);
   const [inbox, setInbox] = usePersistent<InboxItem[]>("herama.inbox", []);
   const [activeProjectId, setActiveProjectId] = useState("");
+  const [openProjectId, setOpenProjectId] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projectDir, setProjectDir] = useState("");
 
@@ -114,17 +115,20 @@ export default function App() {
 
   const selectProject = (p: Project) => {
     setActiveProjectId(p.id);
-    setProjectDir(p.dir);
+    setProjectDir(p.dir ?? "");
   };
 
-  const addProject = async () => {
-    const dir = await window.herama?.pickFolder();
-    if (!dir) return;
-    const existing = projects.find(p => p.dir === dir);
-    if (existing) { selectProject(existing); return; }
-    const p: Project = { id: rid(), name: dir.split(/[\\/]/).filter(Boolean).pop() ?? dir, dir };
+  const addProject = () => {
+    const p: Project = { id: rid(), name: "New project", files: [] };
     setProjects(list => [...list, p]);
     selectProject(p);
+    setOpenProjectId(p.id);
+    setView("projects");
+  };
+
+  const updateProject = (id: string, patch: Partial<Project>) => {
+    setProjects(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
+    if ("dir" in patch && id === activeProjectId) setProjectDir(patch.dir ?? "");
   };
 
   const removeProject = (id: string) => {
@@ -200,7 +204,8 @@ export default function App() {
   }, [runJob]);
 
   const activeConv = conversations.find(c => c.id === activeConvId) ?? conversations[0];
-  const activeAgent = state.agents.find(a => a.id === activeConv.agentId);
+  const activeProject = projects.find(p => p.id === activeConv.projectId);
+  const activeAgent = state.agents.find(a => a.id === (activeConv.agentId ?? activeProject?.agentId));
   const title = view === "chat"
     ? (activeAgent ? `${activeAgent.name} - ${activeConv.title}` : activeConv.title)
     : VIEW_TITLES[view];
@@ -208,8 +213,10 @@ export default function App() {
   const page = (() => {
     switch (view) {
       case "projects":
-        return <ProjectsPage projects={projects} conversations={conversations} activeProjectId={activeProjectId}
-          onAdd={addProject} onOpen={p => { selectProject(p); }} onNewSession={id => createConv({ projectId: id })} onRemove={removeProject} />;
+        return <ProjectsPage projects={projects} conversations={conversations} agents={state.agents} activeProjectId={activeProjectId}
+          openId={openProjectId} onOpenId={id => { setOpenProjectId(id); const pr = projects.find(x => x.id === id); if (pr) selectProject(pr); }}
+          onCreate={addProject} onUpdate={updateProject} onOpenConv={selectConv}
+          onNewSession={id => createConv({ projectId: id })} onRemove={removeProject} />;
       case "capabilities":
         return <CapabilitiesPage models={state.models} connected={state.connected} engine={state.engine} runtime={state.runtime} onRetry={() => { void retryRuntime().then(poll); }} />;
       case "messaging":
@@ -239,7 +246,7 @@ export default function App() {
           onDeleteConv={deleteConv}
           projects={projects}
           activeProjectId={activeProjectId}
-          onSelectProject={selectProject}
+          onSelectProject={p => { selectProject(p); setOpenProjectId(p.id); setView("projects"); }}
           onAddProject={addProject}
           agents={state.agents}
           activeAgentId={activeConv.agentId}
@@ -267,6 +274,7 @@ export default function App() {
             key={activeConv.id}
             conv={activeConv}
             agent={activeAgent}
+            project={activeProject}
             state={state}
             onConvUpdate={updateConv}
             onModelChange={m => setState(s => ({ ...s, activeModel: m }))}
