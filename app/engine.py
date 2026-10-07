@@ -6,7 +6,7 @@ import logging
 import time
 from pathlib import Path
 
-from app import calib, config, resources, runtime
+from app import calib, config, monitor, resources, runtime
 from app.server_llm import ServerLLM
 
 _DEFAULT_KEEP = 300  # seconds; -1 = indefinite
@@ -151,6 +151,7 @@ class Engine:
             self._reset_timer(keep_alive)
             return self._llm
         self.unload()
+        monitor.set_state("queued", f"Loading {p.stem}")
         if use_server:
             n_ctx = int(num_ctx or 65536)  # default context: 64K
             cpu_moe, kv_type = int(cpu_moe or 0), kv_type or "f16"
@@ -176,6 +177,7 @@ class Engine:
         self._loaded_name = _norm(name)
         self._loaded_at = time.time()
         self._reset_timer(keep_alive)
+        monitor.set_state("idle")
         return self._llm
 
     def _reset_timer(self, keep_alive: int):
@@ -240,27 +242,66 @@ class Engine:
     def chat(self, name: str, messages: list[dict], opts: dict, stream: bool, vision: bool = False):
         """Native chat_completion path. Yields content chunks then final dict."""
         with self._lock:
-            keep = opts.get("keep_alive", _DEFAULT_KEEP)
-            llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, vision=vision,
-                            cpu_moe=opts.get("num_cpu_moe", 0), expert_used=opts.get("num_expert_used", 0),
-                            kv_type=opts.get("kv_type", "f16"), threads=opts.get("num_thread", 0))
-            kw = self._kw(opts)
-            if not stream:
-                r = llm.create_chat_completion(messages=messages, **kw)
-                msg = r["choices"][0]["message"]
-                yield msg.get("content", "")
-                yield r
-                return
-            last, t_first = None, 0.0
-            for c in llm.create_chat_completion(messages=messages, stream=True, **kw):
-                last = c
-                t_first = t_first or time.perf_counter()
-                delta = c["choices"][0].get("delta", {})
-                text = delta.get("content") or ""
-                if text:
-                    yield text
-            self._learn_speed(last, t_first)
-            yield last or {}
+            t_req = time.perf_counter()
+            try:
+                keep = opts.get("keep_alive", _DEFAULT_KEEP)
+                llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, vision=vision,
+                                cpu_moe=opts.get("num_cpu_moe", 0), expert_used=opts.get("num_expert_used", 0),
+                                kv_type=opts.get("kv_type", "f16"), threads=opts.get("num_thread", 0))
+                kw = self._kw(opts)
+                monitor.set_state("reading")
+                if not stream:
+                    r = llm.create_chat_completion(messages=messages, **kw)
+                    msg = r["choices"][0]["message"]
+                    self._record(r, t_req, "done")
+                    yield msg.get("content", "")
+                    yield r
+                    return
+                last, t_first, n = None, 0.0, 0
+                for c in llm.create_chat_completion(messages=messages, stream=True, **kw):
+                    last = c
+                    delta = c["choices"][0].get("delta", {}) if c.get("choices") else {}
+                    text = delta.get("content") or ""
+                    if text:
+                        n += 1
+                        t_first = t_first or time.perf_counter()
+                        elapsed = time.perf_counter() - t_first
+                        monitor.generating(n / elapsed if n > 3 and elapsed > 0.2 else 0.0)
+                        yield text
+                self._learn_speed(last, t_first)
+                self._record(last, t_req, "done")
+                yield last or {}
+            except GeneratorExit:  # the client stopped reading
+                monitor.finish("stopped", 0, 0, 0, 0.0, 0.0, time.perf_counter() - t_req)
+                raise
+            except Exception as e:
+                monitor.fail(str(e))
+                raise
+
+    def _record(self, raw: dict | None, t_req: float, status: str) -> None:
+        """Send the finished request's token counts and timings to the monitor."""
+        raw = raw or {}
+        usage, timings = raw.get("usage") or {}, raw.get("timings") or {}
+        out = usage.get("completion_tokens", 0)
+        dur = time.perf_counter() - t_req
+        monitor.finish(status, usage.get("prompt_tokens", 0), timings.get("cache_n", 0), out,
+                       timings.get("predicted_per_second") or (out / dur if dur > 0 else 0.0),
+                       timings.get("prompt_per_second") or 0.0, dur)
+
+    def monitor_info(self) -> tuple[int, dict | None]:
+        """(context size, expert placement) of the loaded model for the monitor."""
+        st = getattr(self, "_settings", None)
+        if not st:
+            return 0, None
+        experts = None
+        try:
+            meta = resources.gguf_meta(self.path(st["model"]))
+            layers, n_exp = int(meta.get("block_count") or 0), int(meta.get("expert_count") or 0)
+            if layers and n_exp > 1:
+                experts = {"gpu_layers": max(0, layers - int(st["cpu_moe"] or 0)), "layers": layers}
+        except Exception:
+            pass
+        return st["ctx"], experts
 
     def _learn_speed(self, last: dict | None, t_first: float) -> None:
         """Store the measured generation speed for the settings in use (used to correct estimates)."""

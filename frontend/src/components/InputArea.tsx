@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
 import type { Agent, Attachment, Effort, Model, Project, Safety, Tune } from "../types";
 import Dropdown from "./Dropdown";
+import StateDot from "./StateDot";
+import type { ModelState } from "../api";
 import ModelPicker from "./ModelPicker";
 import { readAttachment } from "../util";
 import EffortPicker from "./EffortPicker";
@@ -22,6 +24,7 @@ interface Props {
   onModelChange: (m: string) => void;
   onEffortChange: (e: Effort) => void;
   onManageModels: () => void;
+  modelState: ModelState | null;
   safety: Safety;
   onSafetyChange: (s: Safety) => void;
   projects: Project[];
@@ -106,6 +109,7 @@ export default function InputArea(p: Props) {
       )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 6 }}>
+        <span style={{ marginRight: "auto", padding: "0 4px", display: "flex" }}><StateDot s={p.modelState} /></span>
         <ModelPicker models={p.models} active={p.activeModel} contextLength={p.contextLength} onPick={p.onModelChange} onManage={p.onManageModels} />
         <button onClick={() => setShowSettings(true)}
           title={`context and generation settings (ctx ${p.contextLength >= 1024 ? `${Math.round(p.contextLength / 1024)}K` : p.contextLength})`}

@@ -159,3 +159,27 @@ export function approvedTune(state: { contextLength: number; tune: Record<string
     ? { numGpu: t.numGpu, cpuMoe: t.cpuMoe, expertUsed: t.expertUsed, kvType: t.kvType, threads: t.threads }
     : {};
 }
+
+export type ModelStateName = "idle" | "reading" | "generating" | "queued" | "error";
+export interface ModelState { state: ModelStateName; detail: string; progress: number; tps: number }
+export interface MonitorRequest { time: number; status: string; prompt: number; reused: number; output: number; tps: number; hit_rate: number; duration: number }
+export interface MonitorSnap {
+  state: ModelState; decode_tps: number; prefill_tps: number; ctx_used: number; ctx_total: number;
+  experts: { gpu_layers: number; layers: number } | null; requests: MonitorRequest[];
+  gpu: { name?: string; load?: number; vram_used_mb?: number; vram_total_mb?: number; temp?: number; power?: number; power_limit?: number; pcie_gen?: number; pcie_width?: number };
+  system: { cpu?: number; threads?: number; ram_used_gb?: number; ram_total_gb?: number; disk_read_mb_s?: number };
+}
+
+export async function fetchModelState(): Promise<ModelState | null> {
+  try {
+    const r = await fetch(`${BASE}/api/monitor/state`);
+    return r.ok ? (await r.json()) as ModelState : null;
+  } catch { return null; }
+}
+
+export async function fetchMonitor(): Promise<MonitorSnap | null> {
+  try {
+    const r = await fetch(`${BASE}/api/monitor`);
+    return r.ok ? (await r.json()) as MonitorSnap : null;
+  } catch { return null; }
+}

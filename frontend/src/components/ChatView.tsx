@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Safety, Agent, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune } from "../api";
-import type { ChatMsg } from "../api";
+import type { ChatMsg, ModelState } from "../api";
 import { projectContext, projectFolders, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
@@ -19,6 +19,7 @@ interface Props {
   onEffortChange: (e: Effort) => void;
   onSafetyChange: (s: Safety) => void;
   onManageModels: () => void;
+  modelState: ModelState | null;
   onTps: (t: number) => void;
   taskApi: TaskApi;
 }
@@ -45,7 +46,7 @@ function fitToContext(msgs: Message[], ctx: number, reserved = 0): Message[] {
 
 const PLAN_HINT = "Plan mode: when a request needs actions on the user's machine, describe a short numbered plan and do not claim to have run anything.";
 
-export default function ChatView({ conv, agent, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onManageModels, onTps, taskApi }: Props) {
+export default function ChatView({ conv, agent, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onManageModels, modelState, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -166,6 +167,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
         onModelChange={onModelChange}
         onEffortChange={onEffortChange}
         onManageModels={onManageModels}
+        modelState={modelState}
         safety={state.safety}
         onSafetyChange={onSafetyChange}
         projects={projects}

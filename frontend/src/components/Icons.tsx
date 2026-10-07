@@ -1,7 +1,7 @@
 export type IconName =
   | "sidebar" | "tasks" | "plan" | "browser" | "terminal" | "files"
   | "gear" | "send" | "chevron" | "close"
-  | "search" | "pin" | "plus" | "trash" | "bolt" | "message" | "box" | "clock" | "clip" | "stop" | "bulb" | "shield";
+  | "search" | "pin" | "plus" | "trash" | "bolt" | "message" | "box" | "clock" | "clip" | "stop" | "bulb" | "shield" | "gauge" | "sun" | "moon";
 
 const PATHS: Record<IconName, JSX.Element> = {
   sidebar: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
@@ -25,6 +25,9 @@ const PATHS: Record<IconName, JSX.Element> = {
   stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   bulb: <><path d="M9 18h6M10 21h4" /><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" /></>,
+  gauge: <><path d="M4 17a8 8 0 1 1 16 0" /><path d="M12 17l4-5" /></>,
+  sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5" /></>,
+  moon: <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" />,
   shield: <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />,
 };
 

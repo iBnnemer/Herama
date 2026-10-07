@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from app import monitor
+
 _START_TIMEOUT = 900  # seconds; big models on slow disks take a while
 
 
@@ -144,8 +146,9 @@ class ServerLLM:
     def _stream(self, path: str, body: dict):
         body["stream"] = True
         body["stream_options"] = {"include_usage": True}
+        body["return_progress"] = True
         resp = self._open(path, body)
-        last, usage, thinking = None, None, False
+        last, usage, thinking, timings = None, None, False, None
         try:
             for raw in resp:
                 line = raw.decode("utf-8", "replace").strip()
@@ -162,6 +165,11 @@ class ServerLLM:
                     raise RuntimeError(str(obj["error"]))
                 if obj.get("usage"):
                     usage = obj["usage"]
+                if obj.get("timings"):
+                    timings = obj["timings"]
+                if obj.get("prompt_progress"):
+                    pp = obj["prompt_progress"]
+                    monitor.progress(pp.get("processed", 0), pp.get("total", 0))
                 if obj.get("choices"):
                     delta = obj["choices"][0].get("delta") or {}
                     think = delta.pop("reasoning_content", None)
@@ -175,6 +183,8 @@ class ServerLLM:
                     yield obj
             if last is not None and usage:
                 last["usage"] = usage
+            if last is not None and timings:
+                last["timings"] = timings
         finally:
             resp.close()
 

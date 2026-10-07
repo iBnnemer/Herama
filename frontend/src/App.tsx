@@ -4,8 +4,9 @@ import type {
   View, Project, Job, InboxItem,
 } from "./types";
 import { EFFORT_PARAMS } from "./types";
-import type { ChatMsg } from "./api";
-import { fetchHealth, fetchModels, fetchAgents, streamChat, retryRuntime, approvedTune } from "./api";
+import type { ChatMsg, ModelState } from "./api";
+import MonitorModal from "./components/MonitorModal";
+import { fetchModelState, fetchHealth, fetchModels, fetchAgents, streamChat, retryRuntime, approvedTune } from "./api";
 import { projectFolders, rid, splitThink } from "./util";
 import { usePersistent } from "./hooks/usePersistent";
 import Sidebar from "./components/Sidebar";
@@ -48,6 +49,18 @@ export default function App() {
   const [activeConvId, setActiveConvId] = useState<string>(() => conversations[0].id);
   const [layout, setLayout] = usePersistent<Layout>("herama.layout", { leftOpen: true, panels: ["tasks", "files"], dockWidth: 380 });
   const [projects, setProjects] = usePersistent<Project[]>("herama.projects", []);
+  const [theme, setTheme] = usePersistent<"dark" | "light">("herama.theme", "dark");
+  const [monitorOpen, setMonitorOpen] = useState(false);
+  const [modelState, setModelState] = useState<ModelState | null>(null);
+  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  useEffect(() => {
+    if (!state.connected) return;
+    let live = true;
+    const tick = () => { void fetchModelState().then(s => { if (live) setModelState(s); }); };
+    tick();
+    const t = setInterval(tick, 700);
+    return () => { live = false; clearInterval(t); };
+  }, [state.connected]);
   const [jobs, setJobs] = usePersistent<Job[]>("herama.jobs", []);
   const [inbox, setInbox] = usePersistent<InboxItem[]>("herama.inbox", []);
   const [activeProjectId, setActiveProjectId] = useState("");
@@ -282,6 +295,9 @@ export default function App() {
           onToggleLeft={() => setLayout(l => ({ ...l, leftOpen: !l.leftOpen }))}
           openPanels={layout.panels}
           onTogglePanel={togglePanel}
+          onOpenMonitor={() => setMonitorOpen(true)}
+          theme={theme}
+          onToggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")}
         />
         {view === "chat" ? (
           <ChatView
@@ -300,6 +316,7 @@ export default function App() {
             onEffortChange={e => setState(s => ({ ...s, effort: e }))}
             onSafetyChange={v => setState(s => ({ ...s, safety: v }))}
             projects={projects}
+            modelState={modelState}
             onManageModels={() => setView("capabilities")}
             onTps={t => setState(s => ({ ...s, tps: t }))}
             taskApi={taskApi}
@@ -317,6 +334,7 @@ export default function App() {
         projectDir={projectDir}
         onProjectDir={setProjectDir}
       />
+      {monitorOpen && <MonitorModal onClose={() => setMonitorOpen(false)} />}
     </div>
   );
 }

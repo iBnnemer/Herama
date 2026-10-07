@@ -11,6 +11,9 @@ interface Props {
   onToggleLeft: () => void;
   openPanels: PanelId[];
   onTogglePanel: (id: PanelId) => void;
+  onOpenMonitor: () => void;
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
 }
 
 const tbtn: React.CSSProperties = {
@@ -41,6 +44,10 @@ export default function TopBar(p: Props) {
           );
         })}
       </div>
+      <button onClick={p.onOpenMonitor} title="monitor" style={{ ...tbtn, color: "var(--text-dim)" }}><Icon name="gauge" /></button>
+      <button onClick={p.onToggleTheme} title={p.theme === "dark" ? "switch to light mode" : "switch to dark mode"} style={{ ...tbtn, color: "var(--text-dim)" }}>
+        <Icon name={p.theme === "dark" ? "sun" : "moon"} />
+      </button>
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>
         {p.tps > 0 && <span>{p.tps.toFixed(1)} t/s</span>}
         <span style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: p.connected ? "var(--green)" : "var(--border2)" }} />
