@@ -155,7 +155,8 @@ def auto(model: Path, ctx: int, learn: bool = True) -> dict:
     best, fitting = None, []
     # a model whose name says Q4 always keeps a q4_0 KV cache
     q4_named = bool(re.search(r"q4", model.name, re.I))
-    kinds = ("q4_0",) if q4_named else KV_TYPES
+    q8_named = bool(re.search(r"q8", model.name, re.I))  # starts at q8_0 and drops to q4_0 when the context grows
+    kinds = ("q4_0",) if q4_named else ("q8_0", "q4_0") if q8_named else KV_TYPES
     for kv in kinds:
         p = propose(model, ctx, learn=learn, kv_type=kv)
         if not p["fits"]:
@@ -181,7 +182,7 @@ def auto(model: Path, ctx: int, learn: bool = True) -> dict:
                 hi = mid - 256
         best = propose(model, found["ctx"] if found else 512, learn=learn, kv_type="q4_0")
         adjusted.append(f"Context limited to {best['ctx']}: the most this PC can hold")
-    if best["kv_type"] != "f16" and not q4_named:
+    if best["kv_type"] != "f16" and not q4_named and not (q8_named and best["kv_type"] == "q8_0"):
         adjusted.append(f"KV cache: f16 -> {best['kv_type']}")
     if best["cpu_moe"]:
         adjusted.append(f"Expert layers on CPU: {best['cpu_moe']} of {best['layers']}")
