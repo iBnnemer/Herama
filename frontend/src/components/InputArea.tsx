@@ -104,7 +104,7 @@ export default function InputArea(p: Props) {
       )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 6 }}>
-        <Dropdown down align="right" title="model" label={p.activeModel ? shortName(p.activeModel) : "Choose a model"} value={p.activeModel}
+        <Dropdown align="right" title="model" label={p.activeModel ? shortName(p.activeModel) : "Choose a model"} value={p.activeModel}
           onPick={p.onModelChange} items={p.models.map(m => ({ id: m.name, label: shortName(m.name) }))} />
         <button onClick={() => setShowSettings(true)}
           title={`context and generation settings (ctx ${p.contextLength >= 1024 ? `${Math.round(p.contextLength / 1024)}K` : p.contextLength})`}
