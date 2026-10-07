@@ -1,129 +1,55 @@
-# Herama
+# herama
 
-Local LLM backend — FastAPI + llama-cpp-python with an Ollama-compatible API.
+Local LLM desktop app — Electron + React UI, FastAPI + llama-cpp-python backend (Ollama-compatible API).
 
-## متطلبات التشغيل
+## التشغيل السريع
 
+### Windows
 ```
-pip install -r requirements.txt
+انقر نقراً مزدوجاً على: START.bat
 ```
 
-ضع ملفات `.gguf` في مجلد `models/`.
+### macOS / Linux
+```
+./START.sh
+```
 
-## التشغيل
+يقوم السكريبت تلقائياً بـ:
+1. تثبيت مكتبات Python (`requirements.txt`)
+2. تثبيت مكتبات Node عند أول تشغيل (`frontend/node_modules`)
+3. تشغيل التطبيق — Electron يشغّل الـ backend تلقائياً عند الفتح
+
+## المتطلبات الأساسية (مرة واحدة فقط)
+
+| أداة | رابط التحميل |
+|------|-------------|
+| Python 3.10+ | https://www.python.org/downloads/ (✓ Add to PATH) |
+| Node.js 20+ | https://nodejs.org/ |
+
+لا يلزم تثبيت أي شيء آخر — كل شيء يثبّت تلقائياً.
+
+## النماذج
+
+ضع ملفات `.gguf` في مجلد `models/` — يجدها التطبيق تلقائياً.
+
+## بناء نسخة قابلة للتوزيع (.exe)
 
 ```bash
-python -m app.main
-# أو
-uvicorn app.main:app --host 127.0.0.1 --port 11434
+cd frontend
+npm install
+npm run dist
+# → release/herama Setup x.x.x.exe
 ```
 
-## المتغيرات البيئية
+## API
 
-| المتغير | الافتراضي | الوصف |
-|---|---|---|
-| `HERAMA_ROOT` | مجلد المشروع | جذر المشروع |
-| `HERAMA_MODELS` | `models/` | مجلد ملفات GGUF |
-| `HERAMA_HOST` | `127.0.0.1` | عنوان الاستماع |
-| `HERAMA_PORT` | `11434` | المنفذ (مثل Ollama) |
-| `HERAMA_SKILL_EXEC` | `0` | `1` لتفعيل تشغيل المهارات |
-| `HERAMA_SKILL_TIMEOUT` | `10` | مهلة تشغيل المهارة (ثواني) |
-| `HERAMA_API_KEY` | `` | مفتاح Bearer (فارغ = بلا مصادقة) |
-| `HERAMA_PRELOAD` | `` | اسم نموذج يُحمَّل فور الإقلاع |
+يعمل على `http://127.0.0.1:11434` — متوافق مع Ollama:
 
-## مسارات Ollama المتوافقة
-
-| المسار | الطريقة | الوصف |
-|---|---|---|
-| `/api/tags` | GET | قائمة النماذج |
-| `/api/show` | POST | بيانات النموذج (GGUF meta) |
-| `/api/ps` | GET | النموذج المحمّل حالياً |
-| `/api/generate` | POST | توليد نص |
-| `/api/chat` | POST | محادثة (message history) |
-| `/api/embeddings` | POST | تضمينات نصية |
-| `/api/delete` | DELETE | حذف نموذج |
-| `/api/copy` | POST | نسخ نموذج |
-| `/api/pull` | POST | stub — لا يُنزّل (ضع GGUF يدوياً) |
-| `/api/version` | GET | إصدار Herama |
-| `/health` | GET | حالة الخادم + النموذج المحمّل |
-
-## امتدادات Herama
-
-أضف هذه الحقول لأي طلب `/api/generate` أو `/api/chat`:
-
-```json
-{
-  "memory": true,
-  "auto_extract": true
-}
-```
-
-- `memory: true` — يحقن حقائق ذات صلة من الذاكرة في الـ system prompt.
-- `auto_extract: true` — يستخرج الجمل الإخبارية من الرد ويخزّنها تلقائياً.
-
-## مسارات الذاكرة
-
-```
-POST   /api/memory          إضافة حقيقة
-GET    /api/memory?k=20     آخر k حقائق
-GET    /api/memory/search?q=... بحث FTS
-DELETE /api/memory/{id}     حذف حقيقة
-```
-
-## مسارات المهارات
-
-```
-GET    /api/skills                    قائمة المهارات
-POST   /api/skills/generate           توليد مهارة بالنموذج
-POST   /api/skills                    حفظ مهارة يدوياً
-POST   /api/skills/{name}/run         تشغيل مهارة (يتطلب HERAMA_SKILL_EXEC=1)
-```
-
-## Docker
-
-```bash
-# بناء وتشغيل مباشر
-docker build -t herama .
-docker run -p 11434:11434 -v /path/to/models:/models herama
-
-# أو باستخدام docker-compose
-docker compose up
-```
-
-## مصادقة API Key (اختياري)
-
-```bash
-export HERAMA_API_KEY=mysecret
-```
-
-بعدها كل طلب يحتاج:
-```
-Authorization: Bearer mysecret
-```
-
-بدون `HERAMA_API_KEY` لا تُفعَّل المصادقة.
-
-## الاختبارات
-
-```bash
-pytest tests/ -v
-```
-
-## الهيكل
-
-```
-app/
-  main.py          FastAPI + الراوترات
-  config.py        الإعدادات
-  engine.py        تحميل النموذج + keep_alive
-  resources.py     قراءة RAM/VRAM + رأس GGUF
-  api/
-    ollama.py      مسارات Ollama
-    memory.py      مسارات الذاكرة
-    skills.py      مسارات المهارات
-  memory/store.py  SQLite + FTS5
-  skills/registry.py  AST validator + sandbox
-models/   ← ضع ملفات .gguf هنا
-.memory/  ← قاعدة بيانات SQLite (تُنشأ تلقائياً)
-skills/   ← مهارات مُوَلَّدة (تُنشأ تلقائياً)
-```
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | health check |
+| `GET /api/tags` | list models |
+| `POST /api/generate` | generate (streaming) |
+| `POST /api/chat` | chat (streaming) |
+| `GET /api/agents` | list agents |
+| `POST /api/agents` | create agent |
