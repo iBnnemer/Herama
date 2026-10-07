@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
 import type { Agent, Attachment, Effort, Model, Project, Safety, Tune } from "../types";
 import Dropdown from "./Dropdown";
@@ -35,6 +35,7 @@ interface Props {
   onAgent: (id: string) => void;
   onContextChange: (n: number, tune?: Tune) => void;
   disabled: boolean;
+  draft?: { text: string; n: number };   // text to put in the box (a quoted reply)
   placeholder?: string;
 }
 
@@ -51,6 +52,17 @@ export default function InputArea(p: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [hasText, setHasText] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!p.draft || !el) return;
+    el.value = p.draft.text + el.value;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+    setHasText(true);
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.draft?.n]);
   const [atts, setAtts] = useState<Attachment[]>([]);
   const [notice, setNotice] = useState("");
 

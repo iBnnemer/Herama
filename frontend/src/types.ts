@@ -17,6 +17,7 @@ export interface Message {
   files?: string[];
   toolLabel?: string;
   toolStatus?: "running" | "done" | "error";
+  reaction?: string;
 }
 
 export interface Conversation {

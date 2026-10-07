@@ -29,7 +29,7 @@ interface Props {
   taskApi: TaskApi;
 }
 
-interface Queued { text: string; atts: Attachment[] }
+interface Queued { text: string; atts: Attachment[]; truncateAt?: string }   // truncateAt: id of an edited message; everything from it on is replaced
 
 const HISTORY_LIMIT = 40;
 const MAX_ROUNDS = 16;
@@ -116,7 +116,7 @@ export default function ChatView({ conv, agent, group, project, projects, state,
   const model = agent?.model || state.activeModel;
   const ready = state.connected && !!model;
 
-  const sendNow = useCallback(async ({ text, atts }: Queued) => {
+  const sendNow = useCallback(async ({ text, atts, truncateAt }: Queued) => {
     const ep = EFFORT_PARAMS[state.effort];
     const cid = conv.id;
     const imgs = atts.filter(a => a.kind === "image" && a.dataUrl);
@@ -132,7 +132,11 @@ export default function ChatView({ conv, agent, group, project, projects, state,
     };
     const asstId = rid();
     const asstTs = Date.now();
-    const base = [...conv.messages, userMsg];
+    const cut = truncateAt ? conv.messages.findIndex(m => m.id === truncateAt) : -1;
+    const prior = cut >= 0 ? conv.messages.slice(0, cut) : conv.messages;
+    const priorSummary = cut >= 0 ? undefined : conv.summary;
+    if (cut >= 0 && conv.summary) onConvUpdate(cid, { summary: undefined });
+    const base = [...prior, userMsg];
     const label = text || atts[0]?.name || "attachment";
     const title = conv.messages.length === 0 ? label.slice(0, 40) + (label.length > 40 ? "…" : "") : conv.title;
 
@@ -150,17 +154,17 @@ export default function ChatView({ conv, agent, group, project, projects, state,
     const baseSystem = [agent?.system_prompt, groupHint(group, state.agents), state.safety === "plan" ? PLAN_HINT : "", projectContext(project, knowledge)].filter(Boolean).join("\n\n");
     const convo = base.filter(m => m.role !== "tool");
     let fitted = fitToContext(convo.slice(-HISTORY_LIMIT), state.contextLength, baseSystem.length);
-    let summary = conv.summary?.text ?? "";
+    let summary = priorSummary?.text ?? "";
     if (fitted.length < convo.length) {   // older messages no longer fit: keep their gist in a running summary
       fitted = fitToContext(convo.slice(-HISTORY_LIMIT), state.contextLength, baseSystem.length + 2500);
       const dropped = convo.slice(0, convo.length - fitted.length);
-      const from = conv.summary ? dropped.findIndex(m => m.id === conv.summary!.upTo) + 1 : 0;
+      const from = priorSummary ? dropped.findIndex(m => m.id === priorSummary.upTo) + 1 : 0;
       const fresh = dropped.slice(from);
       if (fresh.length >= 2) {
         show("", true);
         setStreaming(true);
         try {
-          const text2 = await summarize(conv.summary?.text, fresh, model, state.contextLength);
+          const text2 = await summarize(priorSummary?.text, fresh, model, state.contextLength);
           if (text2) { summary = text2; onConvUpdate(cid, { summary: { text: text2, upTo: dropped[dropped.length - 1].id } }); }
         } catch { /* keep the old summary; the oldest messages are simply dropped */ }
       }
@@ -319,6 +323,14 @@ export default function ChatView({ conv, agent, group, project, projects, state,
     }
   }, [model, state.effort, state.safety, state.contextLength, state.tune, conv, agent, project, onConvUpdate, onTps, taskApi]);
 
+  const [draft, setDraft] = useState<{ text: string; n: number }>();
+  const msgActions = {
+    canEdit: !streaming && ready,
+    onReply: (t: string) => setDraft({ text: t, n: Date.now() }),
+    onEdit: (id: string, t: string) => { if (!streaming) void sendNow({ text: t, atts: [], truncateAt: id }); },
+    onReact: (id: string, emoji: string | undefined) => !streaming && onConvUpdate(conv.id, { messages: conv.messages.map(m => m.id === id ? { ...m, reaction: emoji } : m) }),
+  };
+
   const submit = (text: string, atts: Attachment[]) => {
     if (streaming) setQueue(q => [...q, { text, atts }]);
     else void sendNow({ text, atts });
@@ -339,8 +351,9 @@ export default function ChatView({ conv, agent, group, project, projects, state,
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)", minHeight: 0 }}>
-      <MessageList messages={conv.messages} footer={pending ? <ApprovalCard title={pending.title} detail={pending.detail} onChoose={pending.resolve} /> : null} />
+      <MessageList messages={conv.messages} actions={msgActions} footer={pending ? <ApprovalCard title={pending.title} detail={pending.detail} onChoose={pending.resolve} /> : null} />
       <InputArea
+        draft={draft}
         models={state.models}
         activeModel={model}
         effort={state.effort}
