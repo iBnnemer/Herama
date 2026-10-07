@@ -104,9 +104,9 @@ def test_calibration_learns_from_measurements(tmp_path, monkeypatch):
 def test_auto_prefers_cpu_experts_then_kv_compression_then_context_cap(tmp_path, monkeypatch):
     f = _model(tmp_path, monkeypatch, 17, {**MOE, "context_length": 1_000_000}, "Qwen3-30B-A3B-Q4_K_M.gguf")
     short = tune.auto(f, 8192)
-    assert short["kv_type"] == "f16" and short["cpu_moe"] > 0 and not short["adjusted"][0].startswith("Context")
+    assert short["kv_type"] == "q4_0" and short["cpu_moe"] > 0 and not short["adjusted"][0].startswith("Context")
     big = tune.auto(f, 98304)
-    assert big["kv_type"] != "f16" and big["fits"] and big["ctx"] == 98304
+    assert big["kv_type"] == "q4_0" and big["fits"] and big["ctx"] == 98304
     huge = tune.auto(f, 4_000_000)
     assert huge["kv_type"] == "q4_0" and huge["ctx"] < 4_000_000 and huge["fits"]
     assert any(a.startswith("Context limited") for a in huge["adjusted"])
@@ -114,14 +114,14 @@ def test_auto_prefers_cpu_experts_then_kv_compression_then_context_cap(tmp_path,
 
 
 def test_auto_small_dense_model_needs_no_adjustment(tmp_path, monkeypatch):
-    f = _model(tmp_path, monkeypatch, 7, DENSE)
+    f = _model(tmp_path, monkeypatch, 7, DENSE, "m-Q6_K.gguf")
     a = tune.auto(f, 4096)
     assert a["kv_type"] == "f16" and a["ngl"] == a["layers"] and a["adjusted"] == []
 
 
 def test_auto_dense_compresses_kv_before_offloading_layers(tmp_path, monkeypatch):
     # 7.7 GB dense model on a 12 GB card; KV grows with context but all layers must stay on the GPU
-    f = _model(tmp_path, monkeypatch, 7.7, {**DENSE, "block_count": 48, "context_length": 1_000_000}, "dense-Q4_K_M.gguf")
+    f = _model(tmp_path, monkeypatch, 7.7, {**DENSE, "block_count": 48, "context_length": 1_000_000}, "dense-Q6_K.gguf")
     small = tune.auto(f, 8192)
     assert small["kv_type"] == "f16" and small["ngl"] == 48
     mid = tune.auto(f, 32768)
@@ -129,8 +129,8 @@ def test_auto_dense_compresses_kv_before_offloading_layers(tmp_path, monkeypatch
     assert tune.auto(f, 65536)["kv_type"] == "q4_0"
 
 
-def test_q4_named_model_skips_q8_cache(tmp_path, monkeypatch):
+def test_q4_named_model_always_uses_q4_cache(tmp_path, monkeypatch):
     f = _model(tmp_path, monkeypatch, 7.7, {**DENSE, "block_count": 48, "context_length": 1_000_000}, "dense-Q4_K_M.gguf")
-    assert tune.auto(f, 32768)["kv_type"] == "q4_0"
+    assert tune.auto(f, 4096)["kv_type"] == "q4_0" and tune.auto(f, 4096)["adjusted"] == []
     g = _model(tmp_path, monkeypatch, 7.7, {**DENSE, "block_count": 48, "context_length": 1_000_000}, "dense-Q6_K.gguf")
     assert tune.auto(g, 32768)["kv_type"] in ("q8_0", "q4_0")
