@@ -85,6 +85,8 @@ def runtime_retry():
 @app.on_event("startup")
 def _prepare_runtime():
     from app import runtime
+    if not runtime.disabled() and "PYTEST_CURRENT_TEST" not in __import__("os").environ:
+        runtime.kill_stale()  # orphans from a previous run would hold GPU memory
     runtime.start_background()
 
 # added last so it is the outermost layer and answers preflight before auth

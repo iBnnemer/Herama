@@ -218,6 +218,24 @@ def _install_safe(backend: str) -> None:
             _state.update(state="error", error=str(e))
 
 
+def kill_stale() -> int:
+    """Stop llama-server processes from this runtime folder left behind by an earlier backend run."""
+    import psutil
+    n = 0
+    root = str(RUNTIME_DIR.resolve()).lower()
+    for p in psutil.process_iter(["name", "exe"]):
+        try:
+            if p.info["name"] and p.info["name"].lower().startswith("llama-server") \
+                    and str(p.info["exe"] or "").lower().startswith(root):
+                p.kill()
+                n += 1
+        except (psutil.Error, OSError):
+            continue
+    if n:
+        log.info("runtime: stopped %d stale llama-server process(es)", n)
+    return n
+
+
 def disabled() -> bool:
     return os.getenv("HERAMA_RUNTIME", "auto").lower() == "off"
 
