@@ -80,7 +80,7 @@ export default function App() {
     setState(s => {
       const models: Model[] = mr.status === "fulfilled" ? mr.value : s.models;
       const agents: Agent[] = ar.status === "fulfilled" ? ar.value : s.agents;
-      return { ...s, connected, models, agents, activeModel: s.activeModel || models[0]?.name || "" };
+      return { ...s, connected, models, agents, activeModel: models.some(m => m.name === s.activeModel) ? s.activeModel : (models[0]?.name ?? "") };
     });
   }, []);
 

@@ -23,11 +23,12 @@ client = TestClient(app)
 
 def test_agents_crud(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "MEMORY_DIR", tmp_path)
-    assert client.get("/api/agents").json() == []
+    base = client.get("/api/agents").json()
+    assert [x["id"] for x in base] == ["default"]
     a = client.post("/api/agents", json={"name": "coder", "system_prompt": "be brief"}).json()
     assert a["name"] == "coder" and a["id"]
     assert client.patch(f"/api/agents/{a['id']}", json={"model": "m1"}).json()["model"] == "m1"
-    assert len(client.get("/api/agents").json()) == 1
+    assert len(client.get("/api/agents").json()) == 2
     assert client.delete(f"/api/agents/{a['id']}").status_code == 200
     assert client.delete(f"/api/agents/{a['id']}").status_code == 404
 
@@ -45,3 +46,11 @@ def test_cors_preflight():
     })
     assert r.status_code == 200
     assert r.headers["access-control-allow-origin"] == "*"
+
+
+def test_default_agent_protected(tmp_path, monkeypatch):
+    monkeypatch.setattr(cfg, "MEMORY_DIR", tmp_path)
+    assert client.delete("/api/agents/default").status_code == 400
+    r = client.patch("/api/agents/default", json={"system_prompt": "be terse"}).json()
+    assert r["system_prompt"] == "be terse"
+    assert client.get("/api/agents").json()[0]["system_prompt"] == "be terse"

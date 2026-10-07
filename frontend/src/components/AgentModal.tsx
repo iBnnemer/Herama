@@ -43,7 +43,7 @@ export default function AgentModal({ agent, onClose, onSaved }: Props) {
       <textarea style={{ ...inp, minHeight: 90, resize: "vertical" as const }} value={system} onChange={e => setSystem(e.target.value)} placeholder="you are a helpful assistant…" />
       {error && <div style={{ color: "var(--red)", fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        {agent && <button onClick={del} style={{ marginRight: "auto", color: "var(--red)", fontSize: 12, padding: "7px 12px", border: "1px solid var(--red)", borderRadius: 8 }}>delete</button>}
+        {agent && agent.id !== "default" && <button onClick={del} style={{ marginRight: "auto", color: "var(--red)", fontSize: 12, padding: "7px 12px", border: "1px solid var(--red)", borderRadius: 8 }}>delete</button>}
         <button onClick={onClose} style={{ padding: "7px 16px", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-mid)", fontSize: 13 }}>cancel</button>
         <button onClick={save} disabled={saving} style={{ padding: "7px 16px", background: "var(--accent)", color: "#000", borderRadius: 8, fontWeight: 600, fontSize: 13 }}>
           {saving ? "saving…" : "save"}

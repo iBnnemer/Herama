@@ -85,9 +85,13 @@ export async function* streamChat(opts: {
     for (const line of lines.filter(Boolean)) {
       try {
         const obj = JSON.parse(line);
+        if (obj.error) throw new Error(String(obj.error));
         const piece = obj.message?.content;
         if (piece) yield piece as string;
-      } catch { /* skip malformed line */ }
+      } catch (e) {
+        if (e instanceof SyntaxError) continue;
+        throw e;
+      }
     }
   }
 }

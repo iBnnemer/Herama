@@ -26,7 +26,8 @@ class Engine:
         self._timer: threading.Timer | None = None
 
     def models(self) -> list[Path]:
-        return sorted(config.MODELS_DIR.glob("**/*.gguf"))
+        return sorted(p for p in config.MODELS_DIR.glob("**/*.gguf")
+                      if not p.name.lower().startswith("mmproj"))  # vision projectors are not chat models
 
     def path(self, name: str) -> Path:
         n = _norm(name)
@@ -46,8 +47,7 @@ class Engine:
         self.unload()
         self.plan = resources.plan(p, num_ctx, num_gpu)
         self._llm = Llama(model_path=str(p), n_ctx=self.plan.n_ctx,
-                          n_gpu_layers=self.plan.n_gpu_layers, verbose=False,
-                          chat_format="chatml")
+                          n_gpu_layers=self.plan.n_gpu_layers, verbose=False)
         self._key = key
         self._loaded_name = _norm(name)
         self._loaded_at = time.time()

@@ -1,6 +1,7 @@
 """Ollama-compatible routes."""
 import hashlib
 import json
+import logging
 import time
 from datetime import datetime, timezone
 
@@ -12,6 +13,7 @@ from app import resources
 from app.engine import engine
 from app.memory.store import memory
 
+log = logging.getLogger("herama")
 router = APIRouter(prefix="/api")
 
 
@@ -144,12 +146,16 @@ def generate(r: GenReq):
 
     def ndjson():
         buf = []
-        for item in gen:
-            if isinstance(item, str):
-                buf.append(item)
-                yield json.dumps({"model": r.model, "created_at": _now(), "response": item, "done": False}) + "\n"
-            else:
-                yield json.dumps(final(item, "".join(buf))) + "\n"
+        try:
+            for item in gen:
+                if isinstance(item, str):
+                    buf.append(item)
+                    yield json.dumps({"model": r.model, "created_at": _now(), "response": item, "done": False}) + "\n"
+                else:
+                    yield json.dumps(final(item, "".join(buf))) + "\n"
+        except Exception as e:
+            log.exception("generation failed")
+            yield json.dumps({"error": f"{type(e).__name__}: {e}", "done": True}) + "\n"
 
     return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
@@ -199,13 +205,17 @@ def chat(r: ChatReq):
 
     def ndjson():
         buf = []
-        for item in gen:
-            if isinstance(item, str):
-                buf.append(item)
-                yield json.dumps({"model": r.model, "created_at": _now(),
-                                  "message": _msg(item), "done": False}) + "\n"
-            else:
-                yield json.dumps(final(item, "".join(buf))) + "\n"
+        try:
+            for item in gen:
+                if isinstance(item, str):
+                    buf.append(item)
+                    yield json.dumps({"model": r.model, "created_at": _now(),
+                                      "message": _msg(item), "done": False}) + "\n"
+                else:
+                    yield json.dumps(final(item, "".join(buf))) + "\n"
+        except Exception as e:
+            log.exception("chat failed")
+            yield json.dumps({"error": f"{type(e).__name__}: {e}", "done": True}) + "\n"
 
     return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 

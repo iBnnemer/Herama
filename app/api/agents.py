@@ -7,6 +7,10 @@ from pydantic import BaseModel
 
 from app import config
 
+DEFAULT_ID = "default"
+DEFAULT_AGENT = {"id": DEFAULT_ID, "name": "Default agent", "model": "",
+                 "system_prompt": "You are a helpful assistant."}
+
 router = APIRouter(prefix="/api/agents")
 _lock = threading.Lock()
 
@@ -29,9 +33,12 @@ def _file():
 
 def _load() -> list[dict]:
     try:
-        return json.loads(_file().read_text("utf-8"))
+        items = json.loads(_file().read_text("utf-8"))
     except (FileNotFoundError, ValueError):
-        return []
+        items = []
+    if not any(it.get("id") == DEFAULT_ID for it in items):
+        items.insert(0, dict(DEFAULT_AGENT))
+    return items
 
 
 def _save(items: list[dict]) -> None:
@@ -70,6 +77,8 @@ def update(agent_id: str, a: AgentPatch):
 
 @router.delete("/{agent_id}")
 def delete(agent_id: str):
+    if agent_id == DEFAULT_ID:
+        raise HTTPException(400, "the default agent cannot be deleted")
     with _lock:
         items = _load()
         kept = [it for it in items if it["id"] != agent_id]

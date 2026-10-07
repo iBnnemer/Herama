@@ -20,8 +20,8 @@ export default function EffortPicker({ effort, onChange }: Props) {
   return (
     <div ref={box} style={{ position: "relative" }}>
       <button onClick={() => setOpen(o => !o)} style={{
-        display: "flex", alignItems: "center", gap: 5, padding: "4px 10px",
-        background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8,
+        display: "flex", alignItems: "center", gap: 5, padding: "4px 8px",
+        background: "transparent", border: "none", borderRadius: 8,
         color: "var(--text-mid)", fontSize: 12,
       }}>
         <span>{EFFORT_PARAMS[effort].label}</span>

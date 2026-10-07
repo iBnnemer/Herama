@@ -72,6 +72,7 @@ export default function ChatView({ conv, agent, state, onConvUpdate, onModelChan
       failed = true;
       full += `${full ? "\n" : ""}[error] ${String(err)}`;
     } finally {
+      if (!full) { failed = true; full = "[error] the model returned an empty response"; }
       taskApi.finish(taskId, failed ? "error" : "done");
       show(full, false);
       setStreaming(false);
