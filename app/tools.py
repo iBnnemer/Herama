@@ -536,7 +536,8 @@ def _file_info(a, ctx):
 
 # ── web ───────────────────────────────────────────────────────────────────────
 
-_UA = {"User-Agent": "Mozilla/5.0 (compatible; herama)"}
+_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+       "Accept-Language": "en-US,en;q=0.9", "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"}
 
 
 class _Text(HTMLParser):
@@ -592,11 +593,11 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _fetch(url: str, limit: int = 2_000_000, data: bytes | None = None, timeout: int = 20) -> tuple[bytes, str]:
+def _fetch(url: str, limit: int = 2_000_000, data: bytes | None = None, timeout: int = 20, headers: dict | None = None) -> tuple[bytes, str]:
     _check_public(url)
     opener = urllib.request.build_opener(_Redirects)
     try:
-        with opener.open(urllib.request.Request(url, data=data, headers=_UA), timeout=timeout) as r:
+        with opener.open(urllib.request.Request(url, data=data, headers={**_UA, **(headers or {})}), timeout=timeout) as r:
             return r.read(limit), r.headers.get("Content-Type", "")
     except urllib.error.HTTPError as e:
         raise ToolError(f"the site answered {e.code}") from None
@@ -605,25 +606,20 @@ def _fetch(url: str, limit: int = 2_000_000, data: bytes | None = None, timeout:
 
 
 def parse_search(html: str, limit: int) -> list[dict]:
-    out = []
-    for m in re.finditer(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>(.*?)(?=<a[^>]+class="result__a"|$)', html, re.S):
-        href = m.group(1)
-        q = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
-        url = q["uddg"][0] if "uddg" in q else href
-        snip = re.search(r'class="result__snippet"[^>]*>(.*?)</a>', m.group(3), re.S)
-        out.append({"title": html_to_text(m.group(2)), "url": url, "snippet": html_to_text(snip.group(1)) if snip else ""})
-        if len(out) >= limit:
-            break
-    return out
+    from app import websearch
+    return websearch.parse_ddg_html(html, limit, html_to_text)
 
 
 @tool("web_search", "Web", "net", "Search the web. Returns titles, addresses and short snippets. Open a result with open_url.",
       {"query": S, "max_results": I}, ["query"])
 def _web_search(a, ctx):
-    body = urllib.parse.urlencode({"q": a["query"]}).encode()
-    raw, _ = _fetch("https://html.duckduckgo.com/html/", data=body)
-    hits = parse_search(raw.decode("utf-8", "replace"), max(1, min(int(a.get("max_results") or 6), 15)))
-    return "\n\n".join(f"{i}. {h['title']}\n{h['url']}\n{h['snippet']}" for i, h in enumerate(hits, 1)) or "No results."
+    from app import websearch
+    limit = max(1, min(int(a.get("max_results") or 6), 15))
+    hits, provider, notes = websearch.search(a["query"], limit, _fetch, html_to_text)
+    if not hits:
+        raise ToolError("The web search failed (" + "; ".join(notes) + "). Tell the user; they can set HERAMA_SEARX_URL or BRAVE_API_KEY for a reliable search, "
+                        "or you can open_url a page you already know.")
+    return "\n\n".join(f"{i}. {h['title']}\n{h['url']}\n{h['snippet']}" for i, h in enumerate(hits, 1))
 
 
 @tool("open_url", "Web", "net", "Download a web page and return its readable text.", {"url": S, "max_chars": I}, ["url"])
