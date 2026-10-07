@@ -47,7 +47,7 @@ test("scheduling words switch on the Schedule group", () => {
   assert.ok(matchGroups("search the news every 10 minutes").includes("Schedule"));
   assert.ok(matchGroups("remind me daily").includes("Schedule"));
   // "search the news and its urgent items every 10 minutes", in Arabic
-  const ar = "قم بالبحث عن اخبار اليوم و عواجلها كل 10 دقائق";
+  const ar = "\u0642\u0645 \u0628\u0627\u0644\u0628\u062d\u062b \u0639\u0646 \u0627\u062e\u0628\u0627\u0631 \u0627\u0644\u064a\u0648\u0645 \u0648 \u0639\u0648\u0627\u062c\u0644\u0647\u0627 \u0643\u0644 10 \u062f\u0642\u0627\u0626\u0642";
   const g = matchGroups(ar);
   assert.ok(g.includes("Schedule") && g.includes("Web"));
   assert.ok(!matchGroups("hello there").includes("Schedule"));
