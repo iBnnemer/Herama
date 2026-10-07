@@ -24,6 +24,21 @@ interface Queued { text: string; atts: Attachment[] }
 const HISTORY_LIMIT = 40;
 const b64 = (dataUrl: string) => dataUrl.slice(dataUrl.indexOf(",") + 1);
 
+/** Drop the oldest messages until the conversation fits ~75% of the context (rough 2.5 chars per token). */
+function fitToContext(msgs: Message[], ctx: number): Message[] {
+  const budget = ctx * 0.75 * 2.5;
+  let used = 0;
+  const kept: Message[] = [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    const len = (m.role === "assistant" ? splitThink(m.content).answer : m.content).length + (m.images?.length ?? 0) * 2000;
+    if (kept.length && used + len > budget) break;  // always keep the newest message
+    used += len;
+    kept.unshift(m);
+  }
+  return kept;
+}
+
 export default function ChatView({ conv, agent, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
@@ -57,9 +72,9 @@ export default function ChatView({ conv, agent, state, onConvUpdate, onModelChan
         messages: [...base, { id: asstId, role: "assistant", content: body, ts: asstTs, streaming: live }],
       });
 
-    const history: ChatMsg[] = base
+    const history: ChatMsg[] = fitToContext(base
       .filter(m => m.role !== "tool")
-      .slice(-HISTORY_LIMIT)
+      .slice(-HISTORY_LIMIT), state.contextLength)
       .map(m => ({ role: m.role as "user" | "assistant", content: m.role === "assistant" ? splitThink(m.content).answer : m.content }));
     if (imgs.length) history[history.length - 1].images = imgs.map(a => b64(a.dataUrl!));
     const messages: ChatMsg[] = agent?.system_prompt
