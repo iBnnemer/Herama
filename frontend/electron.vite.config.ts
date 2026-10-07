@@ -1,17 +1,29 @@
 import { defineConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
+import { resolve } from "path";
 
 export default defineConfig({
   main: {
-    build: { outDir: "dist-electron" },
-    // allow Node built-ins (http, path, child_process) in main process
+    build: {
+      outDir: "dist-electron",
+      emptyOutDir: false,
+      lib: { entry: resolve(__dirname, "electron/main.ts"), formats: ["cjs"], fileName: () => "main.js" },
+    },
   },
   preload: {
-    build: { outDir: "dist-electron" },
+    build: {
+      outDir: "dist-electron",
+      emptyOutDir: false,
+      lib: { entry: resolve(__dirname, "electron/preload.ts"), formats: ["cjs"], fileName: () => "preload.js" },
+    },
   },
   renderer: {
+    root: __dirname,
     plugins: [react()],
-    build: { outDir: "dist" },
     server: { port: 5173 },
+    build: {
+      outDir: "dist",
+      rollupOptions: { input: resolve(__dirname, "index.html") },
+    },
   },
 });

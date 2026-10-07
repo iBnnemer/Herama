@@ -62,7 +62,7 @@ function createWindow(): void {
   win.once("ready-to-show", () => win.show());
 
   if (isDev) {
-    win.loadURL("http://localhost:5173");
+    win.loadURL(process.env["ELECTRON_RENDERER_URL"] || "http://localhost:5173");
     // uncomment to debug: win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(__dirname, "../dist/index.html"));
