@@ -4,10 +4,10 @@ import assert from "node:assert/strict";
 import { parseBlocks, parseInline, splitRow } from "./markdown.ts";
 
 const TABLE = [
-  "| الفترة | الدور |",
+  "| \u0627\u0644\u0641\u062a\u0631\u0629 | \u0627\u0644\u062f\u0648\u0631 |",
   "|--------|---------------|",
-  "| **2015-2018** | تدخل عسكري |",
-  "| **2019** | دعم |",
+  "| **2015-2018** | \u062a\u062f\u062e\u0644 \u0639\u0633\u0643\u0631\u064a |",
+  "| **2019** | \u062f\u0639\u0645 |",
 ].join("\n");
 
 test("table with bold cells", () => {
@@ -19,7 +19,7 @@ test("table with bold cells", () => {
 });
 
 test("heading without space, emoji and bold", () => {
-  const [h] = parseBlocks("####1️⃣ **Role**");
+  const [h] = parseBlocks("####1\ufe0f\u20e3 **Role**");
   assert.equal(h.t, "heading");
   assert.equal(h.level, 4);
   assert.ok(h.c.some(n => n.t === "bold"));
