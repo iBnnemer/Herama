@@ -102,3 +102,19 @@ def test_moe_ratio_and_speed():
 def test_estimate_ignores_currently_used_memory():
     # only 1 GB VRAM free right now (another model is loaded) but the 12 GB card can hold a 7 GB model
     assert hub.estimate(int(7 * GB), HW)["fit"] == "gpu"
+
+
+def test_gpu_layers_plan(tmp_path, monkeypatch):
+    from app import resources, runtime
+    from app.engine import Engine
+    f = tmp_path / "m.gguf"
+    f.write_bytes(b"\0" * 10)
+    monkeypatch.setattr(runtime, "current_backend", lambda: "cuda")
+    monkeypatch.setattr(hub, "hardware", lambda: {"vram_total_gb": 12.0})
+    monkeypatch.setattr(Engine, "_gpu_layers", Engine._gpu_layers)  # staticmethod under test
+    assert Engine._gpu_layers(f, 4096) == 999
+    monkeypatch.setattr(type(f), "stat", lambda self: type("S", (), {"st_size": 24 * GB})())
+    monkeypatch.setattr(resources, "gguf_meta", lambda p: {"block_count": 48})
+    assert 0 < Engine._gpu_layers(f, 4096) < 48
+    monkeypatch.setattr(runtime, "current_backend", lambda: "cpu")
+    assert Engine._gpu_layers(f, 4096) == 0

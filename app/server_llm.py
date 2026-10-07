@@ -18,11 +18,13 @@ def _free_port() -> int:
 
 
 class ServerLLM:
-    def __init__(self, binary: Path, model: Path, n_ctx: int, mmproj: Path | None, log_path: Path):
+    def __init__(self, binary: Path, model: Path, n_ctx: int, mmproj: Path | None, log_path: Path, ngl: int | None = None):
         self.port = _free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         cmd = [str(binary), "-m", str(model), "--host", "127.0.0.1", "--port", str(self.port),
                "-c", str(n_ctx), "--jinja"]
+        if ngl is not None:  # explicit GPU layer count; otherwise llama-server picks one itself
+            cmd += ["-ngl", str(ngl)]
         if mmproj:
             cmd += ["--mmproj", str(mmproj)]
         log_path.parent.mkdir(parents=True, exist_ok=True)

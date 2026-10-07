@@ -2,6 +2,7 @@
 import os
 import queue
 import threading
+import logging
 import time
 from pathlib import Path
 
@@ -14,6 +15,8 @@ _DEFAULT_KEEP = 300  # seconds; -1 = indefinite
 def _norm(name: str) -> str:
     """Strip ':latest' suffix for consistent comparisons."""
     return name.removesuffix(":latest")
+
+log = logging.getLogger("herama")
 
 
 class Engine:
@@ -70,13 +73,35 @@ class Engine:
         if vision and mm is None:
             raise RuntimeError("image input needs the matching mmproj .gguf file next to the model")
         log_path = runtime.RUNTIME_DIR / "server.log"
+        ngl = self._gpu_layers(p, n_ctx)
+        log.info("llama-server: %s backend=%s ngl=%s ctx=%d", p.name, runtime.current_backend(), ngl, n_ctx)
         try:
-            return ServerLLM(binary, p, n_ctx, mm, log_path)
+            return ServerLLM(binary, p, n_ctx, mm, log_path, ngl)
         except RuntimeError:
             nxt = runtime.fallback()  # e.g. CUDA build cannot start -> Vulkan -> CPU
             if nxt is None:
                 raise
-            return ServerLLM(nxt, p, n_ctx, mm, log_path)
+            return ServerLLM(nxt, p, n_ctx, mm, log_path, None if runtime.current_backend() != "cpu" else 0)
+
+    @staticmethod
+    def _gpu_layers(p: Path, n_ctx: int) -> int | None:
+        """Layers to offload: all when the weights fit in total VRAM, a proportional share otherwise."""
+        backend = runtime.current_backend()
+        if backend == "cpu":
+            return 0
+        try:
+            from app import hub
+            vram = hub.hardware()["vram_total_gb"] * 1024 ** 3
+            if not vram:
+                return None  # unknown VRAM (non-NVIDIA): let llama-server decide
+            budget = vram - 1.2 * 1024 ** 3 - n_ctx * 256 * 1024  # OS/driver reserve plus a rough KV cache allowance
+            size = p.stat().st_size
+            if size <= budget:
+                return 999
+            layers = int(resources.gguf_meta(p).get("block_count") or 0)
+            return max(0, int(layers * budget / size)) if layers else None
+        except Exception:
+            return None
 
     def load(self, name: str, num_ctx=None, num_gpu=None, keep_alive: int = _DEFAULT_KEEP, vision: bool = False):
         p = self.path(name)
