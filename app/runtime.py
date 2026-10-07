@@ -153,6 +153,7 @@ def _extract(archive: Path, dest: Path) -> None:
 
 def _install(backend: str) -> dict:
     """Download and extract the llama-server build for `backend`. Raises RuntimeError on failure."""
+    wanted = backend
     system, machine = platform.system(), platform.machine()
     with _http(RELEASE_API) as r:
         releases = json.load(r)
@@ -172,6 +173,8 @@ def _install(backend: str) -> dict:
         raise RuntimeError(f"no llama.cpp build found for {system}/{machine}; releases: "
                            f"{[r_.get('tag_name') for r_ in releases[:3]]}; assets: {seen}")
 
+    if backend != wanted:
+        log.warning("runtime: %s build unavailable (driver cuda=%s), using %s", wanted, cuda, backend)
     with _lock:
         _state.update(state="downloading", backend=backend, progress=0.0, error="")
     dest = RUNTIME_DIR / f"{backend}-{rel['tag_name']}"
@@ -194,7 +197,7 @@ def _install(backend: str) -> dict:
         raise RuntimeError("llama-server was not found in the downloaded archive")
     if platform.system() != "Windows":
         binary.chmod(0o755)
-    info = {"backend": backend, "tag": rel["tag_name"], "binary": str(binary.relative_to(RUNTIME_DIR))}
+    info = {"backend": backend, "tag": rel["tag_name"], "binary": str(binary.relative_to(RUNTIME_DIR)), "wanted": wanted}
     _manifest().write_text(json.dumps(info), "utf-8")
     log.info("llama.cpp runtime ready: %s %s", backend, rel["tag_name"])
     return info
@@ -222,12 +225,12 @@ def start_background() -> None:
         return
     with _lock:
         info = _installed()
-        if info:
+        backend = detect_backend()
+        if info and info.get("wanted", info["backend"]) == backend:
             _state.update(state="ready", backend=info["backend"], progress=1.0)
             return
         if _thread and _thread.is_alive():
             return
-        backend = detect_backend()
         log.info("runtime: detected backend=%s cuda=%s gpus=%s", backend, nvidia_cuda_version(), gpu_names())
         _state.update(state="downloading", backend=backend, progress=0.0, error="")
         _thread = threading.Thread(target=_install_safe, args=(_state["backend"],), daemon=True)
