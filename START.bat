@@ -30,9 +30,14 @@ cd frontend
 if not exist node_modules call npm install >> "%LOG%" 2>&1
 if errorlevel 1 goto :fail_npm
 if exist node_modules\electron\dist\electron.exe goto :node_ready
-echo       Downloading Electron runtime...
-call node node_modules\electron\install.js >> "%LOG%" 2>&1
-if not exist node_modules\electron\dist\electron.exe goto :fail_npm
+echo       Downloading Electron runtime, please wait...
+set "ELECTRON_SKIP_BINARY_DOWNLOAD="
+call node node_modules\electron\install.js
+if exist node_modules\electron\dist\electron.exe goto :node_ready
+echo       Retrying with a clean Electron install...
+rmdir /s /q node_modules\electron
+call npm install electron@32 --foreground-scripts
+if not exist node_modules\electron\dist\electron.exe goto :fail_electron
 :node_ready
 cd ..
 echo       done.
@@ -62,6 +67,14 @@ exit /b 1
 
 :no_node
 echo [ERROR] Node.js not found. Install it from https://nodejs.org/
+pause
+exit /b 1
+
+:fail_electron
+cd ..
+echo.
+echo [ERROR] Could not download the Electron runtime. Read the messages above.
+echo         Common causes: no internet, antivirus or firewall blocking github.com.
 pause
 exit /b 1
 
