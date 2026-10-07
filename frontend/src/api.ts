@@ -2,11 +2,13 @@ import type { Agent } from "./types";
 
 export const BASE = "http://127.0.0.1:11434";
 
-export async function fetchHealth(): Promise<boolean> {
+export interface Health { gpu_offload?: boolean; llama_cpp?: string }
+
+export async function fetchHealth(): Promise<Health | null> {
   try {
     const r = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(2000) });
-    return r.ok;
-  } catch { return false; }
+    return r.ok ? await r.json() as Health : null;
+  } catch { return null; }
 }
 
 export async function fetchModels(): Promise<{ name: string }[]> {

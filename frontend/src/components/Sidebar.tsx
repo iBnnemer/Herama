@@ -25,6 +25,7 @@ interface Props {
   onRefreshAgents: () => void;
   unread: number;
   connected: boolean;
+  gpu: boolean | null;
   tps: number;
 }
 
@@ -158,6 +159,11 @@ export default function Sidebar(p: Props) {
       <div style={{ borderTop: "1px solid var(--border)", padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--text-dim)" }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: p.connected ? "var(--green)" : "var(--border2)" }} />
         <span>{p.connected ? (p.tps > 0 ? `${p.tps.toFixed(1)} t/s` : "backend online") : "backend offline"}</span>
+        {p.connected && p.gpu === false && (
+          <span title="llama-cpp-python was built without GPU support, so models run on the CPU only"
+            style={{ marginLeft: "auto", color: "var(--accent)" }}>CPU only</span>
+        )}
+        {p.connected && p.gpu === true && <span style={{ marginLeft: "auto" }}>GPU</span>}
       </div>
 
       {editAgent !== null && (

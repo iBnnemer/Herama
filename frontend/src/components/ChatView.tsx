@@ -74,16 +74,19 @@ export default function ChatView({ conv, agent, state, onConvUpdate, onModelChan
     let failed = false;
     let full = "";
     let tokens = 0;
-    const t0 = performance.now();
+    let tFirst = 0;
 
     try {
       for await (const piece of streamChat({
         model, messages, numCtx: state.contextLength, temperature: ep.temperature, top_p: ep.top_p, signal: ctrl.signal,
       })) {
         full += piece;
-        tokens++;
-        const elapsed = (performance.now() - t0) / 1000;
-        if (elapsed > 0.5) onTps(tokens / elapsed);
+        if (!tFirst) tFirst = performance.now();
+        else {
+          tokens++;
+          const elapsed = (performance.now() - tFirst) / 1000;
+          if (elapsed > 0.5) onTps(tokens / elapsed);
+        }
         show(full, true);
       }
     } catch (err) {

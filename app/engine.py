@@ -40,16 +40,20 @@ class Engine:
     def _vision_handler(self, p: Path):
         """Chat handler for image input; needs the matching mmproj file next to the model."""
         stem = p.stem.lower()
+        family = ("Gemma3ChatHandler" if "gemma-3" in stem or "gemma3" in stem
+                  else "Llava15ChatHandler" if "llava" in stem else None)
+        if family is None:
+            raise RuntimeError("image input is not supported for this model by llama-cpp-python "
+                               "(supported: Gemma 3 and LLaVA models)")
         cands = [q for q in p.parent.glob("*.gguf") if q.name.lower().startswith("mmproj")]
         if not cands:
             raise RuntimeError("image input needs the matching mmproj .gguf file next to the model")
         best = max(cands, key=lambda q: len(os.path.commonprefix([stem, q.stem.lower().removeprefix("mmproj-")])))
         from llama_cpp import llama_chat_format as cf
-        for cls in ("Gemma3ChatHandler", "Llava15ChatHandler"):
-            handler = getattr(cf, cls, None)
-            if handler:
-                return handler(clip_model_path=str(best), verbose=False)
-        raise RuntimeError("this llama-cpp-python build has no multimodal chat handler")
+        handler = getattr(cf, family, None)
+        if handler is None:
+            raise RuntimeError(f"this llama-cpp-python build has no {family}")
+        return handler(clip_model_path=str(best), verbose=False)
 
     def load(self, name: str, num_ctx=None, num_gpu=None, keep_alive: int = _DEFAULT_KEEP, vision: bool = False):
         from llama_cpp import Llama

@@ -36,6 +36,14 @@ async def log_middleware(request: Request, call_next):
     return response
 
 
+def _llama_info() -> dict:
+    try:
+        import llama_cpp
+        return {"llama_cpp": llama_cpp.__version__, "gpu_offload": bool(llama_cpp.llama_supports_gpu_offload())}
+    except Exception:
+        return {}
+
+
 @app.get("/health")
 def health():
     from app.engine import engine
@@ -44,6 +52,7 @@ def health():
         "status": "ok",
         "model": loaded["name"] if loaded else None,
         "models_available": len(list(config.MODELS_DIR.glob("**/*.gguf"))),
+        **_llama_info(),
     }
 
 
