@@ -5,7 +5,7 @@ import type {
 } from "./types";
 import { EFFORT_PARAMS } from "./types";
 import { fetchHealth, fetchModels, fetchAgents, streamChat, retryRuntime, approvedTune } from "./api";
-import { rid } from "./util";
+import { projectFolders, rid, splitThink } from "./util";
 import { usePersistent } from "./hooks/usePersistent";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
@@ -115,20 +115,44 @@ export default function App() {
 
   const selectProject = (p: Project) => {
     setActiveProjectId(p.id);
-    setProjectDir(p.dir ?? "");
+    setProjectDir(projectFolders(p)[0] ?? "");
   };
 
+  const [creatingProject, setCreatingProject] = useState(false);
+
   const addProject = () => {
-    const p: Project = { id: rid(), name: "New project", files: [] };
+    setOpenProjectId("");
+    setView("projects");
+    setCreatingProject(true);
+  };
+
+  const createProject = (name: string, brief: string, folders: string[]) => {
+    const p: Project = { id: rid(), name, description: brief, folders };
     setProjects(list => [...list, p]);
     selectProject(p);
     setOpenProjectId(p.id);
-    setView("projects");
+    setCreatingProject(false);
+    if (brief) void writeProject(p.id, name, brief);
+  };
+
+  /** The active model writes the project description and instructions from the user's short brief. */
+  const writeProject = async (id: string, name: string, brief: string) => {
+    let out = "";
+    try {
+      for await (const piece of streamChat({
+        model: state.activeModel, numCtx: state.contextLength, temperature: 0.4, top_p: 0.9, ...approvedTune(state, state.activeModel),
+        messages: [{ role: "user", content: `Write a project setup for an AI assistant workspace.\nProject name: ${name}\nUser brief: ${brief}\n\nReply with ONLY a JSON object: {"description": "one sentence", "instructions": "clear instructions telling the assistant how to behave in this project"}. Use the same language as the brief.` }],
+      })) out += piece;
+      const m = splitThink(out).answer.match(/\{[\s\S]*\}/);
+      if (!m) return;
+      const j = JSON.parse(m[0]) as { description?: string; instructions?: string };
+      updateProject(id, { ...(j.description ? { description: j.description } : {}), ...(j.instructions ? { instructions: j.instructions } : {}) });
+    } catch { /* keep the user's brief as the description */ }
   };
 
   const updateProject = (id: string, patch: Partial<Project>) => {
     setProjects(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
-    if ("dir" in patch && id === activeProjectId) setProjectDir(patch.dir ?? "");
+    if (("folders" in patch || "dir" in patch) && id === activeProjectId) setProjectDir(patch.folders?.[0] ?? "");
   };
 
   const removeProject = (id: string) => {
@@ -215,7 +239,7 @@ export default function App() {
       case "projects":
         return <ProjectsPage projects={projects} conversations={conversations} agents={state.agents} activeProjectId={activeProjectId}
           openId={openProjectId} onOpenId={id => { setOpenProjectId(id); const pr = projects.find(x => x.id === id); if (pr) selectProject(pr); }}
-          onCreate={addProject} onUpdate={updateProject} onOpenConv={selectConv}
+          creating={creatingProject} onCloseCreate={() => setCreatingProject(false)} onStartCreate={() => setCreatingProject(true)} onCreate={createProject} onUpdate={updateProject} onOpenConv={selectConv}
           onNewSession={id => createConv({ projectId: id })} onRemove={removeProject} />;
       case "capabilities":
         return <CapabilitiesPage models={state.models} connected={state.connected} engine={state.engine} runtime={state.runtime} onRetry={() => { void retryRuntime().then(poll); }} />;

@@ -3,6 +3,7 @@ import type { Agent, Conversation, Mode, Project, View } from "../types";
 import AgentModal from "./AgentModal";
 import Icon from "./Icons";
 import type { IconName } from "./Icons";
+import { projectFolders } from "../util";
 
 interface Props {
   mode: Mode;
@@ -122,7 +123,7 @@ export default function Sidebar(p: Props) {
                   <div onClick={() => p.onSelectProject(pr)} style={{
                     display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 13,
                     color: pr.id === p.activeProjectId ? "var(--text)" : "var(--text-mid)",
-                  }} title={pr.dir}>
+                  }} title={projectFolders(pr).join("\n")}>
                     <Icon name="files" size={14} />
                     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pr.name}</span>
                     <IconBtn icon="plus" title="new session in project" onClick={() => p.onNewConv(pr.id)} />

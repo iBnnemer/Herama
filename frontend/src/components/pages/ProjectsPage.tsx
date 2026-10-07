@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { Agent, Conversation, Project } from "../../types";
-import { readProjectFile } from "../../util";
+import { projectFolders } from "../../util";
+import Modal from "../Modal";
 import PageShell, { card, ghostBtn, primaryBtn, Empty } from "./PageShell";
 
 interface Props {
@@ -10,7 +11,10 @@ interface Props {
   activeProjectId: string;
   openId: string;
   onOpenId: (id: string) => void;
-  onCreate: () => void;
+  creating: boolean;
+  onCloseCreate: () => void;
+  onCreate: (name: string, brief: string, folders: string[]) => void;
+  onStartCreate: () => void;
   onUpdate: (id: string, patch: Partial<Project>) => void;
   onOpenConv: (id: string) => void;
   onNewSession: (projectId: string) => void;
@@ -22,15 +26,47 @@ const input: React.CSSProperties = {
   padding: "8px 12px", color: "var(--text)", fontSize: 13,
 };
 const label: React.CSSProperties = { fontSize: 12, color: "var(--text-dim)", margin: "16px 0 6px", textTransform: "uppercase", letterSpacing: "0.08em" };
-const kb = (n: number) => (n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
+
+function NewProject(p: { onClose: () => void; onCreate: (name: string, brief: string, folders: string[]) => void }) {
+  const [name, setName] = useState("");
+  const [brief, setBrief] = useState("");
+  const [folders, setFolders] = useState<string[]>([]);
+  const add = async () => {
+    const d = await window.herama?.pickFolder();
+    if (d && !folders.includes(d)) setFolders([...folders, d]);
+  };
+  return (
+    <Modal title="New project" onClose={p.onClose}>
+      <div style={{ ...label, marginTop: 0 }}>Name</div>
+      <input style={input} autoFocus value={name} onChange={e => setName(e.target.value)} />
+      <div style={label}>What is this project about?</div>
+      <textarea style={{ ...input, minHeight: 90, resize: "vertical" }} value={brief} onChange={e => setBrief(e.target.value)}
+        placeholder="Describe it in a few words. The model writes the description and instructions for you." />
+      <div style={{ display: "flex", alignItems: "center", ...label }}>
+        <span style={{ flex: 1 }}>Folders</span>
+        <button style={ghostBtn} onClick={() => void add()}>Add folder</button>
+      </div>
+      {folders.map(f => (
+        <div key={f} style={{ ...card, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ flex: 1, fontSize: 12, wordBreak: "break-all" }}>{f}</span>
+          <button style={{ ...ghostBtn, color: "var(--red)" }} onClick={() => setFolders(folders.filter(x => x !== f))}>Remove</button>
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
+        <button style={primaryBtn} disabled={!name.trim()} onClick={() => p.onCreate(name.trim(), brief.trim(), folders)}>Create</button>
+      </div>
+    </Modal>
+  );
+}
 
 export default function ProjectsPage(p: Props) {
   const open = p.projects.find(x => x.id === p.openId);
   if (open) return <ProjectDetail {...p} project={open} />;
 
   return (
-    <PageShell title="Projects" hint="A project holds instructions, knowledge files and a managing agent that every session in it uses."
-      action={<button style={primaryBtn} onClick={p.onCreate}>New project</button>}>
+    <PageShell title="Projects" hint="A project holds instructions, knowledge folders and a managing agent that every session in it uses."
+      action={<button style={primaryBtn} onClick={p.onStartCreate}>New project</button>}>
+      {p.creating && <NewProject onClose={p.onCloseCreate} onCreate={p.onCreate} />}
       {p.projects.length === 0 && <Empty text="No projects yet. Create one to get started." />}
       {p.projects.map(pr => {
         const n = p.conversations.filter(c => c.projectId === pr.id).length;
@@ -41,7 +77,7 @@ export default function ProjectsPage(p: Props) {
             <div style={{ fontSize: 14, fontWeight: 600 }}>{pr.name}</div>
             {pr.description && <div style={{ fontSize: 12, color: "var(--text-mid)", marginTop: 2 }}>{pr.description}</div>}
             <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>
-              {(pr.files ?? []).length} file{(pr.files ?? []).length === 1 ? "" : "s"} - {n} session{n === 1 ? "" : "s"}
+              {projectFolders(pr).length} folder{projectFolders(pr).length === 1 ? "" : "s"} - {n} session{n === 1 ? "" : "s"}
               {agent ? ` - managed by ${agent.name}` : ""}
             </div>
           </div>
@@ -53,25 +89,12 @@ export default function ProjectsPage(p: Props) {
 
 function ProjectDetail(p: Props & { project: Project }) {
   const pr = p.project;
-  const picker = useRef<HTMLInputElement>(null);
-  const [notice, setNotice] = useState("");
   const sessions = p.conversations.filter(c => c.projectId === pr.id);
-
-  const addFiles = async (list: FileList | null) => {
-    if (!list) return;
-    const added = [];
-    const errors: string[] = [];
-    for (const f of Array.from(list)) {
-      const r = await readProjectFile(f);
-      if (typeof r === "string") errors.push(r); else added.push(r);
-    }
-    if (added.length) p.onUpdate(pr.id, { files: [...(pr.files ?? []), ...added] });
-    setNotice(errors.join("\n"));
-  };
-
-  const linkFolder = async () => {
-    const dir = await window.herama?.pickFolder();
-    if (dir) p.onUpdate(pr.id, { dir });
+  const folders = projectFolders(pr);
+  const setFolders = (list: string[]) => p.onUpdate(pr.id, { folders: list, dir: undefined });
+  const addFolder = async () => {
+    const d = await window.herama?.pickFolder();
+    if (d && !folders.includes(d)) setFolders([...folders, d]);
   };
 
   return (
@@ -96,27 +119,17 @@ function ProjectDetail(p: Props & { project: Project }) {
       <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>The agent manages the project: its prompt and model are used by new sessions here.</div>
 
       <div style={{ display: "flex", alignItems: "center", ...label }}>
-        <span style={{ flex: 1 }}>Files</span>
-        <button style={ghostBtn} onClick={() => picker.current?.click()}>Add files</button>
-        <input ref={picker} type="file" multiple hidden onChange={e => { void addFiles(e.target.files); e.target.value = ""; }} />
+        <span style={{ flex: 1 }}>Folders</span>
+        <button style={ghostBtn} onClick={() => void addFolder()}>Add folder</button>
       </div>
-      {(pr.files ?? []).length === 0 && <Empty text="No files. Add text, code or notes the model should know about." />}
-      {(pr.files ?? []).map(f => (
-        <div key={f.id} style={{ ...card, display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ flex: 1, fontSize: 13, wordBreak: "break-all" }}>{f.name}</span>
-          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{kb(f.size)}</span>
-          <button style={{ ...ghostBtn, color: "var(--red)" }}
-            onClick={() => p.onUpdate(pr.id, { files: (pr.files ?? []).filter(x => x.id !== f.id) })}>Remove</button>
+      {folders.length === 0 && <Empty text="No folders. Add folders the model should know about." />}
+      {folders.map(f => (
+        <div key={f} style={{ ...card, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ flex: 1, fontSize: 12, wordBreak: "break-all" }}>{f}</span>
+          <button style={{ ...ghostBtn, color: "var(--red)" }} onClick={() => setFolders(folders.filter(x => x !== f))}>Remove</button>
         </div>
       ))}
-      {notice && <div style={{ color: "var(--red)", fontSize: 12, whiteSpace: "pre-wrap" }}>{notice}</div>}
-
-      <div style={label}>Linked folder (optional)</div>
-      <div style={{ ...card, display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ flex: 1, fontSize: 12, color: "var(--text-mid)", wordBreak: "break-all" }}>{pr.dir || "None. Used by the file browser and terminal."}</span>
-        <button style={ghostBtn} onClick={() => void linkFolder()}>{pr.dir ? "Change" : "Link folder"}</button>
-        {pr.dir && <button style={ghostBtn} onClick={() => p.onUpdate(pr.id, { dir: undefined })}>Unlink</button>}
-      </div>
+      <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>The file tree and text files of these folders are added to every session. The first folder is used by the file browser and terminal.</div>
 
       <div style={{ display: "flex", alignItems: "center", ...label }}>
         <span style={{ flex: 1 }}>Sessions</span>

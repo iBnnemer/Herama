@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("herama", {
   fsList: (dir: string) => ipcRenderer.invoke("fs:list", dir),
   fsRead: (file: string) => ipcRenderer.invoke("fs:read", file),
   fsResolve: (cwd: string, target: string) => ipcRenderer.invoke("fs:resolve", cwd, target),
+  fsKnowledge: (dirs: string[], budget: number) => ipcRenderer.invoke("fs:knowledge", dirs, budget),
   pickFolder: () => ipcRenderer.invoke("fs:pick"),
   termRun: (id: string, cmd: string, cwd: string) => ipcRenderer.invoke("term:run", id, cmd, cwd),
   termKill: (id: string) => ipcRenderer.invoke("term:kill", id),

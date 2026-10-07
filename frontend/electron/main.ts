@@ -84,6 +84,39 @@ function registerIpc(): void {
     return r.canceled ? null : r.filePaths[0];
   });
 
+  ipcMain.handle("fs:knowledge", async (_e, dirs: string[], budget: number) => {
+    const skip = new Set(["node_modules", ".git", "dist", "build", "out", "__pycache__", ".venv", "venv", ".next", "target"]);
+    const tree: string[] = [];
+    const chunks: string[] = [];
+    let room = Math.max(0, budget);
+    const walk = async (root: string, dir: string, depth: number): Promise<void> => {
+      if (depth > 6 || tree.length >= 400) return;
+      let entries: fs.Dirent[];
+      try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
+      entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+      for (const d of entries) {
+        if (d.name.startsWith(".") || skip.has(d.name) || tree.length >= 400) continue;
+        const full = path.join(dir, d.name);
+        const rel = path.relative(root, full).split(path.sep).join("/");
+        if (d.isDirectory()) { tree.push(`${path.basename(root)}/${rel}/`); await walk(root, full, depth + 1); continue; }
+        tree.push(`${path.basename(root)}/${rel}`);
+        try {
+          const st = await fs.promises.stat(full);
+          if (st.size > 100_000 || room < 600) continue;
+          const buf = await fs.promises.readFile(full);
+          if (buf.subarray(0, 4096).includes(0)) continue;
+          let text = buf.toString("utf8");
+          const head = `### ${path.basename(root)}/${rel}\n`;
+          if (head.length + text.length > room) text = text.slice(0, Math.max(0, room - head.length - 20)) + "\n[truncated]";
+          chunks.push(head + text);
+          room -= head.length + text.length;
+        } catch { /* unreadable file */ }
+      }
+    };
+    for (const root of dirs) await walk(root, root, 0);
+    return { tree: tree.join("\n"), text: chunks.join("\n\n") };
+  });
+
   ipcMain.handle("term:run", (e: IpcMainInvokeEvent, id: string, cmd: string, cwd: string) => {
     const proc = spawn(cmd, { shell: true, cwd, windowsHide: true });
     termProcs.set(id, proc);

@@ -3,7 +3,7 @@ import type { Agent, Project, Attachment, AppState, Conversation, Effort, Messag
 import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune } from "../api";
 import type { ChatMsg } from "../api";
-import { projectContext, rid, splitThink } from "../util";
+import { projectContext, projectFolders, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
 
@@ -73,7 +73,12 @@ export default function ChatView({ conv, agent, project, state, onConvUpdate, on
         messages: [...base, { id: asstId, role: "assistant", content: body, ts: asstTs, streaming: live }],
       });
 
-    const system = [agent?.system_prompt, projectContext(project, state.contextLength)].filter(Boolean).join("\n\n");
+    const dirs = projectFolders(project);
+    const instrLen = (project?.instructions ?? "").length + (project?.description ?? "").length;
+    const knowledge = dirs.length && window.herama?.fsKnowledge
+      ? await window.herama.fsKnowledge(dirs, Math.max(0, Math.floor(state.contextLength * 0.4 * 2.5) - instrLen)).catch(() => undefined)
+      : undefined;
+    const system = [agent?.system_prompt, projectContext(project, knowledge)].filter(Boolean).join("\n\n");
     const history: ChatMsg[] = fitToContext(base
       .filter(m => m.role !== "tool")
       .slice(-HISTORY_LIMIT), state.contextLength, system.length)

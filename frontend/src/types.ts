@@ -28,17 +28,15 @@ export interface Conversation {
 
 export type View = "chat" | "projects" | "capabilities" | "messaging" | "artifacts" | "jobs";
 
-export interface ProjectFile { id: string; name: string; size: number; text: string }
-
 /** A project works like a Claude project: instructions, knowledge files, a managing agent and its own sessions. */
 export interface Project {
   id: string;
   name: string;
   description?: string;
   instructions?: string;
-  files?: ProjectFile[];
+  folders?: string[]; // knowledge folders: their file tree and text files are given to every session
   agentId?: string;   // agent that manages the project; its sessions use this agent by default
-  dir?: string;       // optional linked folder for the file browser and terminal
+  dir?: string;       // legacy single folder, migrated into folders
 }
 
 export interface Job {
