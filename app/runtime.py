@@ -16,7 +16,7 @@ from app import config
 
 log = logging.getLogger("herama")
 
-RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=15"
 RUNTIME_DIR = Path(os.getenv("HERAMA_RUNTIME_DIR", config.ROOT / "runtime"))
 CHAIN = {"cuda": ["cuda", "vulkan", "cpu"], "vulkan": ["vulkan", "cpu"], "metal": ["metal", "cpu"], "cpu": ["cpu"]}
 LABELS = {"cuda": "CUDA", "vulkan": "Vulkan", "metal": "Metal", "cpu": "CPU only"}
@@ -81,13 +81,13 @@ def _ver(s: str) -> tuple[int, ...]:
 
 def pick_assets(names: list[str], backend: str, system: str, machine: str, cuda: str | None = None) -> list[str] | None:
     """Names of the release files to download for this backend, or None if the release has no match."""
-    low = {n.lower(): n for n in names if n.lower().endswith((".zip", ".tar.gz"))}
+    low = {n.lower(): n for n in names if n.lower().endswith((".zip", ".tar.gz")) and "llama" in n.lower()}
     arm = machine.lower() in ("arm64", "aarch64")
-    arch = "arm64" if arm else "x64"
-    osname = {"Windows": "win", "Linux": "ubuntu", "Darwin": "macos"}.get(system, "")
+    arch_re = r"arm64|aarch64" if arm else r"x64|x86_64|amd64"
+    os_re = {"Windows": r"win|windows", "Linux": r"ubuntu|linux", "Darwin": r"macos|darwin"}.get(system, "$^")
 
     def find(*must: str, exclude: tuple[str, ...] = ()) -> list[str]:
-        return [n for n in low if f"-bin-{osname}" in n and f"-{arch}" in n
+        return [n for n in low if re.search(rf"[-_.]({os_re})[-_.]", n) and re.search(rf"[-_.]({arch_re})[-_.]", n)
                 and all(m in n for m in must) and not any(x in n for x in exclude)]
 
     if backend == "cuda":
@@ -101,12 +101,12 @@ def pick_assets(names: list[str], backend: str, system: str, machine: str, cuda:
         if not usable:
             return None
         _, main, ver = max(usable)
-        rt = [n for n in low if n.startswith("cudart") and f"cuda-{ver}-" in n and f"-{arch}" in n]
+        rt = [n for n in low if "cudart" in n and f"cuda-{ver}-" in n and re.search(arch_re, n)]
         return [low[main]] + [low[n] for n in rt[:1]]
     if backend == "vulkan":
         hit = find("vulkan")
     elif backend == "metal":
-        hit = find("macos") or [n for n in low if "macos" in n and f"-{arch}" in n]
+        hit = find()
     else:
         hit = find("cpu") or find("avx2") or ([n for n in find("") if not any(
             k in n for k in ("cuda", "vulkan", "hip", "sycl", "opencl", "kompute", "rocm"))])
@@ -152,17 +152,22 @@ def _install(backend: str) -> dict:
     """Download and extract the llama-server build for `backend`. Raises RuntimeError on failure."""
     system, machine = platform.system(), platform.machine()
     with _http(RELEASE_API) as r:
-        rel = json.load(r)
-    sizes = {a["name"]: a for a in rel.get("assets", [])}
+        releases = json.load(r)
     cuda = nvidia_cuda_version()
-    picked = None
-    for b in CHAIN[backend]:
-        picked = pick_assets(list(sizes), b, system, machine, cuda)
+    picked, rel, sizes = None, {}, {}
+    for rel in releases:
+        sizes = {a["name"]: a for a in rel.get("assets", [])}
+        for b in CHAIN[backend]:
+            picked = pick_assets(list(sizes), b, system, machine, cuda)
+            if picked:
+                backend = b
+                break
         if picked:
-            backend = b
             break
     if not picked:
-        raise RuntimeError(f"no llama.cpp build found for {system}/{machine} in release {rel.get('tag_name')}")
+        seen = ", ".join(sorted({a["name"] for r_ in releases[:2] for a in r_.get("assets", [])})[:15])
+        raise RuntimeError(f"no llama.cpp build found for {system}/{machine}; releases: "
+                           f"{[r_.get('tag_name') for r_ in releases[:3]]}; assets: {seen}")
 
     with _lock:
         _state.update(state="downloading", backend=backend, progress=0.0, error="")

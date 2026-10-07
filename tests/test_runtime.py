@@ -113,3 +113,9 @@ def test_engine_chat_through_server(tmp_path, monkeypatch, fake_binary):
         assert next(text) == "Hello"
     finally:
         eng.unload()
+
+
+def test_pick_assets_alt_naming():
+    names = ["llama-v0.6.0-windows-x86_64-vulkan.zip", "llama-v0.6.0-windows-x86_64-cpu.zip", "notes.txt"]
+    assert runtime.pick_assets(names, "vulkan", "Windows", "AMD64") == ["llama-v0.6.0-windows-x86_64-vulkan.zip"]
+    assert runtime.pick_assets(names, "cpu", "Windows", "AMD64") == ["llama-v0.6.0-windows-x86_64-cpu.zip"]
