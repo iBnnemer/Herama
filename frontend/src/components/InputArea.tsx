@@ -35,9 +35,10 @@ interface Props {
 
 const shortName = (n: string) => n.replace(/:latest$/, "");
 const SAFETY = [
-  { id: "plan", label: "Plan", hint: "Plan first: the model proposes steps and runs nothing" },
   { id: "ask", label: "Ask", hint: "Ask for approval before running commands" },
+  { id: "plan", label: "Plan", hint: "Plan first: the model proposes steps and runs nothing" },
   { id: "auto", label: "Auto", hint: "Run commands without asking" },
+  { id: "off", label: "Off", hint: "No commands or actions at all" },
 ];
 
 export default function InputArea(p: Props) {

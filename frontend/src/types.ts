@@ -1,6 +1,6 @@
 export type Mode = "chat" | "agents";
 
-export type Safety = "plan" | "ask" | "auto";
+export type Safety = "ask" | "plan" | "auto" | "off";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
