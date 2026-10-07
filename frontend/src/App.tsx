@@ -136,18 +136,23 @@ export default function App() {
   };
 
   /** The active model writes the project description and instructions from the user's short brief. */
-  const writeProject = async (id: string, name: string, brief: string) => {
+  const writeProject = async (id: string, name: string, brief: string, current?: Project, change?: string) => {
     let out = "";
     try {
       for await (const piece of streamChat({
         model: state.activeModel, numCtx: state.contextLength, temperature: 0.4, top_p: 0.9, ...approvedTune(state, state.activeModel),
-        messages: [{ role: "user", content: `Write a project setup for an AI assistant workspace.\nProject name: ${name}\nUser brief: ${brief}\n\nReply with ONLY a JSON object: {"description": "one sentence", "instructions": "clear instructions telling the assistant how to behave in this project"}. Use the same language as the brief.` }],
+        messages: [{ role: "user", content: `${change && current ? `Edit this project setup for an AI assistant workspace.\nCurrent description: ${current.description ?? ""}\nCurrent instructions: ${current.instructions ?? ""}\nRequested change: ${change}\nKeep what the change does not touch.` : `Write a project setup for an AI assistant workspace.`}\nProject name: ${name}\nUser brief: ${brief}\n\nReply with ONLY a JSON object: {"description": "one sentence", "instructions": "clear instructions telling the assistant how to behave in this project"}. Use the same language as the brief.` }],
       })) out += piece;
       const m = splitThink(out).answer.match(/\{[\s\S]*\}/);
       if (!m) return;
       const j = JSON.parse(m[0]) as { description?: string; instructions?: string };
       updateProject(id, { ...(j.description ? { description: j.description } : {}), ...(j.instructions ? { instructions: j.instructions } : {}) });
-    } catch { /* keep the user's brief as the description */ }
+    } catch { /* keep the existing text */ }
+  };
+
+  const rewriteProject = (id: string, change: string) => {
+    const p = projects.find(x => x.id === id);
+    return p ? writeProject(id, p.name, p.description ?? "", p, change) : Promise.resolve();
   };
 
   const updateProject = (id: string, patch: Partial<Project>) => {
@@ -239,7 +244,7 @@ export default function App() {
       case "projects":
         return <ProjectsPage projects={projects} conversations={conversations} agents={state.agents} activeProjectId={activeProjectId}
           openId={openProjectId} onOpenId={id => { setOpenProjectId(id); const pr = projects.find(x => x.id === id); if (pr) selectProject(pr); }}
-          creating={creatingProject} onCloseCreate={() => setCreatingProject(false)} onStartCreate={() => setCreatingProject(true)} onCreate={createProject} onUpdate={updateProject} onOpenConv={selectConv}
+          creating={creatingProject} onCloseCreate={() => setCreatingProject(false)} onStartCreate={() => setCreatingProject(true)} onCreate={createProject} onUpdate={updateProject} onRewrite={rewriteProject} onOpenConv={selectConv}
           onNewSession={id => createConv({ projectId: id })} onRemove={removeProject} />;
       case "capabilities":
         return <CapabilitiesPage models={state.models} connected={state.connected} engine={state.engine} runtime={state.runtime} onRetry={() => { void retryRuntime().then(poll); }} />;

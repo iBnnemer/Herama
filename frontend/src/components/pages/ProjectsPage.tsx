@@ -16,6 +16,7 @@ interface Props {
   onCreate: (name: string, brief: string, folders: string[]) => void;
   onStartCreate: () => void;
   onUpdate: (id: string, patch: Partial<Project>) => void;
+  onRewrite: (id: string, change: string) => Promise<void>;
   onOpenConv: (id: string) => void;
   onNewSession: (projectId: string) => void;
   onRemove: (id: string) => void;
@@ -90,6 +91,15 @@ export default function ProjectsPage(p: Props) {
 function ProjectDetail(p: Props & { project: Project }) {
   const pr = p.project;
   const sessions = p.conversations.filter(c => c.projectId === pr.id);
+  const [change, setChange] = useState("");
+  const [busy, setBusy] = useState(false);
+  const rewrite = async () => {
+    if (!change.trim() || busy) return;
+    setBusy(true);
+    await p.onRewrite(pr.id, change.trim());
+    setBusy(false);
+    setChange("");
+  };
   const folders = projectFolders(pr);
   const setFolders = (list: string[]) => p.onUpdate(pr.id, { folders: list, dir: undefined });
   const addFolder = async () => {
@@ -110,6 +120,12 @@ function ProjectDetail(p: Props & { project: Project }) {
       <textarea style={{ ...input, minHeight: 110, resize: "vertical" }} value={pr.instructions ?? ""}
         placeholder="How should the model behave in this project? Tone, rules, background..."
         onChange={e => p.onUpdate(pr.id, { instructions: e.target.value })} />
+
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <input style={input} value={change} disabled={busy} placeholder="Ask the model to edit the description and instructions..."
+          onChange={e => setChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") void rewrite(); }} />
+        <button style={primaryBtn} disabled={busy || !change.trim()} onClick={() => void rewrite()}>{busy ? "Editing..." : "Edit with model"}</button>
+      </div>
 
       <div style={label}>Project agent</div>
       <select style={input} value={pr.agentId ?? ""} onChange={e => p.onUpdate(pr.id, { agentId: e.target.value || undefined })}>
