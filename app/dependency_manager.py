@@ -150,37 +150,67 @@ def _install(package_name: str, mod_name: str) -> bool:
 
 
 def upgrade_packages_async(
-    packages: list[str | tuple[str, str]],
+    packages: list[str | tuple[str, str]] | None = None,
     done_cb: Callable[[dict[str, bool]], None] | None = None,
 ) -> threading.Thread:
     """
-    Silently upgrade *packages* to their latest stable versions in the
-    background.  Each element may be a plain package name or a
-    (package_name, import_name) tuple.  Calls ``done_cb(results)`` when
-    all upgrades finish.  Never blocks the caller.
+    Silently upgrade packages to their latest stable versions in the background.
+
+    When *packages* is None (the default), reads ``requirements.txt`` and
+    runs ``pip install --upgrade --quiet -r requirements.txt`` in one pass —
+    keeping the whole environment in sync with the pinned file.
+
+    When *packages* is given, upgrades each named package individually.
+
+    Never blocks the caller.
     """
     def _worker():
         results: dict[str, bool] = {}
-        for item in packages:
-            pkg = item[0] if isinstance(item, tuple) else item
-            try:
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "--upgrade",
-                     "--quiet", pkg],
-                    capture_output=True, text=True, timeout=120,
-                )
-                success = result.returncode == 0
-                if success:
-                    importlib.invalidate_caches()
-                    ver = _installed_version(pkg) or "unknown"
-                    log.info("Upgraded %s → %s", pkg, ver)
-                    _append_to_requirements(pkg, ver)
-                else:
-                    log.warning("Upgrade failed for %s: %s", pkg, result.stderr[:200])
-                results[pkg] = success
-            except Exception as exc:
-                log.warning("Upgrade exception for %s: %s", pkg, exc)
-                results[pkg] = False
+
+        if packages is None:
+            # upgrade everything listed in requirements.txt
+            req = _REQ_PATH
+            if req.exists():
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install",
+                         "--upgrade", "--quiet", "-r", str(req)],
+                        capture_output=True, text=True, timeout=300,
+                    )
+                    success = result.returncode == 0
+                    if success:
+                        importlib.invalidate_caches()
+                        log.info("Upgraded all packages from requirements.txt")
+                    else:
+                        log.warning("requirements.txt upgrade failed: %s",
+                                    result.stderr[:300])
+                    results["requirements.txt"] = success
+                except Exception as exc:
+                    log.warning("requirements.txt upgrade exception: %s", exc)
+                    results["requirements.txt"] = False
+        else:
+            for item in packages:
+                pkg = item[0] if isinstance(item, tuple) else item
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install",
+                         "--upgrade", "--quiet", pkg],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    success = result.returncode == 0
+                    if success:
+                        importlib.invalidate_caches()
+                        ver = _installed_version(pkg) or "unknown"
+                        log.info("Upgraded %s → %s", pkg, ver)
+                        _append_to_requirements(pkg, ver)
+                    else:
+                        log.warning("Upgrade failed for %s: %s", pkg,
+                                    result.stderr[:200])
+                    results[pkg] = success
+                except Exception as exc:
+                    log.warning("Upgrade exception for %s: %s", pkg, exc)
+                    results[pkg] = False
+
         if done_cb:
             done_cb(results)
 

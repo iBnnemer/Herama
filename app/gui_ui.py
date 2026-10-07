@@ -16,8 +16,8 @@ from app.dependency_manager import ensure_packages, upgrade_packages_async
 
 _GUI_DEPS = ["customtkinter", "requests", "psutil"]
 ensure_packages(_GUI_DEPS)
-# Fire-and-forget upgrade in background — never blocks startup
-upgrade_packages_async(_GUI_DEPS)
+# Upgrade all packages in requirements.txt silently in the background
+upgrade_packages_async()   # no args → reads requirements.txt
 
 import customtkinter as ctk
 import requests
@@ -484,8 +484,9 @@ class BgTasksPanel(ctk.CTkFrame):
 
 class RightSidebar(ctk.CTkFrame):
     """
-    Adaptive Layout Container — toggle buttons inject/remove panels;
-    multiple active panels split vertical space proportionally.
+    Adaptive Layout Container — toggle buttons inject/remove panels.
+    Multiple active panels share vertical space via grid row weights
+    so each panel gets an exactly equal share with no overlap.
     """
 
     PANEL_NAMES = ("Plan", "Files", "Tasks")
@@ -503,9 +504,14 @@ class RightSidebar(ctk.CTkFrame):
         self._build()
 
     def _build(self):
+        # Row 0 = toggle bar (fixed height); row 1 = panel container (grows)
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
         # ── toggle button bar ──
         bar = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0)
-        bar.pack(fill="x", padx=6, pady=(8, 4))
+        bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(8, 4))
 
         for name in self.PANEL_NAMES:
             btn = ctk.CTkButton(
@@ -518,11 +524,12 @@ class RightSidebar(ctk.CTkFrame):
             btn.pack(side="left", padx=3)
             self._btns[name] = btn
 
-        # ── container for dynamic panels ──
+        # ── container — uses grid internally for proportional rows ──
         self._container = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0)
-        self._container.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+        self._container.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 4))
+        self._container.grid_columnconfigure(0, weight=1)
 
-        # create all panels (hidden initially)
+        # create all panels (not placed yet)
         self._panels["Plan"]  = PlanPanel(self._container)
         self._panels["Files"] = FilesPanel(self._container)
         self._panels["Tasks"] = BgTasksPanel(self._container)
@@ -535,22 +542,32 @@ class RightSidebar(ctk.CTkFrame):
         self._relayout()
 
     def _relayout(self):
-        """Repack only active panels, splitting height proportionally."""
-        # unpack all first
+        """
+        Re-grid active panels with equal row weights so each occupies
+        an exactly proportional share of the available vertical space.
+        No overlaps possible: grid replaces geometry manager fully.
+        """
+        # remove all panels from grid
         for panel in self._panels.values():
-            panel.pack_forget()
+            panel.grid_forget()
+
+        # reset all row weights on container
+        for i in range(len(self.PANEL_NAMES)):
+            self._container.grid_rowconfigure(i, weight=0)
 
         active_names = [n for n in self.PANEL_NAMES if self._active[n]]
-
         if not active_names:
-            # nothing active — fall back to Plan
             self._active["Plan"] = True
             active_names = ["Plan"]
 
-        for name in active_names:
-            self._panels[name].pack(fill="both", expand=True, padx=0, pady=(0, 2))
+        # place each active panel in its own row with equal weight=1
+        for row_idx, name in enumerate(active_names):
+            self._container.grid_rowconfigure(row_idx, weight=1)
+            self._panels[name].grid(
+                row=row_idx, column=0, sticky="nsew", padx=0, pady=(0, 2)
+            )
 
-        # update button highlight
+        # update button highlights
         for name, btn in self._btns.items():
             btn.configure(
                 fg_color=ACCENT if self._active[name] else CARD_BG,
@@ -617,16 +634,22 @@ class HeramaApp(ctk.CTk):
 
     def _on_send(self, text: str):
         self._history.append({"role": "user", "content": text})
+
+        # ── GitHub URL shortcut: clone instead of chat ──
+        if text.strip().startswith("https://github.com/"):
+            self._clone_repo(text.strip())
+            return
+
         short = (text[:40] + "…") if len(text) > 40 else text
         self._right.tasks.add_task(f"Chat → {short}", "running")
 
         if not state.connected:
             self._center.add_message("assistant",
-                                     "⚠ Backend offline. Run `python -m app.main` first.")
+                                     "⚠ Backend offline. Run `python launcher.py` or `python -m app.main` first.")
             return
         if not state.local_models:
             self._center.add_message("assistant",
-                                     "⚠ No models loaded. Clone or download a GGUF model.")
+                                     "⚠ No models loaded. Paste a GitHub URL to clone a repo, or download a GGUF model.")
             return
 
         model = state.active_model or state.local_models[0]
@@ -634,6 +657,36 @@ class HeramaApp(ctk.CTk):
 
         threading.Thread(target=self._stream_generate,
                          args=(model, text, stream_lbl), daemon=True).start()
+
+    def _clone_repo(self, url: str):
+        """Handle a GitHub URL pasted into the chat input."""
+        from app.git_manager import clone_repo_async, CloneProgress
+
+        workspace = Path.home() / "herama_workspace"
+        self._center.add_message("user", url)
+        self._center.add_message("assistant", f"Cloning {url} …")
+        self._right.tasks.add_task(f"Clone: {url}", "running")
+
+        stream_lbl = self._center.start_stream()
+
+        def _progress(p: CloneProgress):
+            msg = f"Phase: {p.phase}  {p.pct:.0f}%" if not p.done else "Clone complete ✓"
+            self.after(0, lambda m=msg: stream_lbl.configure(text=m))
+
+        def _done(path, err):
+            if err:
+                self.after(0, lambda e=err: stream_lbl.configure(
+                    text=f"Clone failed: {e[:120]}", text_color=ACCENT_RED))
+                self.after(0, lambda e=err: self._right.tasks.add_task(
+                    f"Clone error: {e[:60]}", "error"))
+            else:
+                self.after(0, lambda p=path: stream_lbl.configure(
+                    text=f"Cloned → {p}\n\nFiles loaded in the Files Explorer panel."))
+                self.after(0, lambda p=path: self._right.files.load_directory(p))
+                self.after(0, lambda p=path: self._right.tasks.add_task(
+                    f"Cloned: {p.name}", "done"))
+
+        clone_repo_async(url, workspace, _progress, _done)
 
     def _stream_generate(self, model: str, prompt: str, lbl: ctk.CTkLabel):
         buf = ""
