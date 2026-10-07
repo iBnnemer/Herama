@@ -61,7 +61,8 @@ def _free_port() -> int:
 
 class ServerLLM:
     def __init__(self, binary: Path, model: Path, n_ctx: int, mmproj: Path | None, log_path: Path, ngl: int | None = None,
-                 cpu_moe: int = 0, expert_used: tuple[str, int] | None = None, kv_type: str = "f16", threads: int = 0):
+                 cpu_moe: int = 0, expert_used: tuple[str, int] | None = None, kv_type: str = "f16", threads: int = 0,
+                 draft: Path | None = None):
         self.port = _free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         cmd = [str(binary), "-m", str(model), "--host", "127.0.0.1", "--port", str(self.port),
@@ -76,6 +77,8 @@ class ServerLLM:
             cmd += ["--n-cpu-moe", str(cpu_moe)]
         if expert_used:  # fewer active experts per token: faster, lower quality
             cmd += ["--override-kv", f"{expert_used[0]}.expert_used_count=int:{expert_used[1]}"]
+        if draft:  # speculative decoding: a small draft model proposes tokens, the main model verifies them
+            cmd += ["-md", str(draft), "-ngld", "999", "--draft-max", "16", "--draft-min", "1"]
         if mmproj:
             cmd += ["--mmproj", str(mmproj)]
         log_path.parent.mkdir(parents=True, exist_ok=True)

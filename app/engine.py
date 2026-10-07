@@ -69,7 +69,8 @@ class Engine:
         return handler(clip_model_path=str(mm), verbose=False)
 
     def _start_server(self, binary: Path, p: Path, n_ctx: int, vision: bool, num_gpu=None, cpu_moe: int = 0,
-                      expert_used: int = 0, kv_type: str = "f16", threads: int = 0):
+                      expert_used: int = 0, kv_type: str = "f16", threads: int = 0,
+                      draft: Path | None = None):
         mm = self._find_mmproj(p)
         if vision and mm is None:
             raise RuntimeError("image input needs the matching mmproj .gguf file next to the model")
@@ -80,12 +81,12 @@ class Engine:
                  cpu_moe, kv_type, n_ctx)
         override = self._expert_override(p, expert_used)
         try:
-            return ServerLLM(binary, p, n_ctx, mm, log_path, ngl, cpu_moe, override, kv_type, threads)
+            return ServerLLM(binary, p, n_ctx, mm, log_path, ngl, cpu_moe, override, kv_type, threads, draft)
         except RuntimeError as e:
             log.warning("llama-server failed with ngl=%s: %s", ngl, str(e)[-300:])
         if ngl not in (None, 0):  # our layer count may be too high: let llama-server fit it itself
             try:
-                return ServerLLM(binary, p, n_ctx, mm, log_path, None, cpu_moe, override, kv_type, threads)
+                return ServerLLM(binary, p, n_ctx, mm, log_path, None, cpu_moe, override, kv_type, threads, draft)
             except RuntimeError as e:
                 log.warning("llama-server failed with automatic layers: %s", str(e)[-300:])
         nxt = runtime.fallback()  # e.g. CUDA build cannot start -> Vulkan -> CPU
@@ -142,11 +143,18 @@ class Engine:
             return None
 
     def load(self, name: str, num_ctx=None, num_gpu=None, keep_alive: int = _DEFAULT_KEEP, vision: bool = False,
-             cpu_moe: int = 0, expert_used: int = 0, kv_type: str = "f16", threads: int = 0):
+             cpu_moe: int = 0, expert_used: int = 0, kv_type: str = "f16", threads: int = 0,
+             draft_model: str = ""):
         p = self.path(name)
+        draft = None
+        if draft_model and draft_model != name:
+            try:
+                draft = self.path(draft_model)
+            except FileNotFoundError:
+                log.warning("draft model %s not found; speculative decoding disabled", draft_model)
         binary = runtime.ensure_binary()
         use_server = binary is not None
-        key = (p, num_ctx, num_gpu, cpu_moe, expert_used, kv_type, threads, False if use_server else vision, use_server)
+        key = (p, num_ctx, num_gpu, cpu_moe, expert_used, kv_type, threads, draft, False if use_server else vision, use_server)
         if self._key == key:
             self._reset_timer(keep_alive)
             return self._llm
@@ -158,9 +166,10 @@ class Engine:
             if num_gpu is None and (auto := self._auto_plan(p, n_ctx)):  # no manual layout: choose it automatically
                 n_ctx, num_gpu, cpu_moe, kv_type = auto["ctx"], auto["ngl"], auto["cpu_moe"], auto["kv"]
             self._llm = self._start_server(binary, p, n_ctx, vision, num_gpu, cpu_moe, int(expert_used or 0),
-                                           kv_type, int(threads or 0))
+                                           kv_type, int(threads or 0), draft)
             self._settings = {"model": p.stem, "ctx": n_ctx, "ngl": self._last_ngl, "cpu_moe": cpu_moe,
-                              "top_k": int(expert_used or 0), "kv": kv_type}
+                              "top_k": int(expert_used or 0), "kv": kv_type,
+                              "draft": draft.stem if draft else ""}
             backend = runtime.current_backend()
             self.plan = resources.Plan(n_ctx, 0 if backend == "cpu" else -1, 0, 0)
         else:
@@ -248,7 +257,8 @@ class Engine:
                 keep = opts.get("keep_alive", _DEFAULT_KEEP)
                 llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, vision=vision,
                                 cpu_moe=opts.get("num_cpu_moe", 0), expert_used=opts.get("num_expert_used", 0),
-                                kv_type=opts.get("kv_type", "f16"), threads=opts.get("num_thread", 0))
+                                kv_type=opts.get("kv_type", "f16"), threads=opts.get("num_thread", 0),
+                                draft_model=opts.get("draft_model") or os.environ.get("HERAMA_DRAFT_MODEL", ""))
                 kw = self._kw(opts)
                 monitor.set_state("reading")
                 if not stream:
