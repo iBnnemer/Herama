@@ -1,3 +1,4 @@
+import Markdown from "./Markdown";
 import { useEffect, useRef } from "react";
 import type { Message } from "../types";
 import { splitThink } from "../util";
@@ -74,7 +75,7 @@ function MsgRow({ m }: { m: Message }) {
             <div dir="auto" style={{ marginTop: 6, paddingInlineStart: 12, borderInlineStart: "2px solid var(--border)", whiteSpace: "pre-wrap" }}>{parts.think}</div>
           </details>
         ) : null}
-        {waiting ? <span className="blink" style={{ color: "var(--accent)" }}>●</span> : answer}
+        {waiting ? <span className="blink" style={{ color: "var(--accent)" }}>●</span> : isUser ? answer : <Markdown text={answer} />}
         {m.streaming && !waiting && <span className="blink" style={{ color: "var(--accent)", marginInlineStart: 2 }}>▋</span>}
       </div>
     </div>
