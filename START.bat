@@ -27,9 +27,12 @@ echo       done.
 
 echo [2/3] Installing Node packages...
 cd frontend
-if exist node_modules goto :node_ready
-call npm install >> "%LOG%" 2>&1
+if not exist node_modules call npm install >> "%LOG%" 2>&1
 if errorlevel 1 goto :fail_npm
+if exist node_modules\electron\dist\electron.exe goto :node_ready
+echo       Downloading Electron runtime...
+call node node_modules\electron\install.js >> "%LOG%" 2>&1
+if not exist node_modules\electron\dist\electron.exe goto :fail_npm
 :node_ready
 cd ..
 echo       done.
