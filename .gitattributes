@@ -1,9 +1,9 @@
-# Force CRLF on Windows for batch scripts
+# Windows batch files must always use CRLF line endings
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
-# Force LF for shell scripts
+# Shell scripts must always use LF
 *.sh  text eol=lf
 
-# Default: LF for all text files
+# All other text files: auto-detect and normalize
 * text=auto
