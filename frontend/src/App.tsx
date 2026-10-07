@@ -40,7 +40,7 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("chat");
   const [view, setView] = useState<View>("chat");
   const [state, setState] = useState<AppState>({
-    connected: false, gpu: null, tps: 0, models: [], agents: [],
+    connected: false, engine: "", accelerated: null, tps: 0, models: [], agents: [],
     activeModel: "", contextLength: 4096, effort: "medium",
   });
   const [conversations, setConversations] = usePersistent<Conversation[]>("herama.convs", [newConv()], reviveConvs);
@@ -77,12 +77,13 @@ export default function App() {
     const health = await fetchHealth();
     if (!health) { setState(s => ({ ...s, connected: false })); return; }
     const connected = true;
-    const gpu = typeof health.gpu_offload === "boolean" ? health.gpu_offload : null;
+    const engine = health.engine ?? "";
+    const accelerated = typeof health.accelerated === "boolean" ? health.accelerated : null;
     const [mr, ar] = await Promise.allSettled([fetchModels(), fetchAgents()]);
     setState(s => {
       const models: Model[] = mr.status === "fulfilled" ? mr.value : s.models;
       const agents: Agent[] = ar.status === "fulfilled" ? ar.value : s.agents;
-      return { ...s, connected, gpu, models, agents, activeModel: models.some(m => m.name === s.activeModel) ? s.activeModel : (models[0]?.name ?? "") };
+      return { ...s, connected, engine, accelerated, models, agents, activeModel: models.some(m => m.name === s.activeModel) ? s.activeModel : (models[0]?.name ?? "") };
     });
   }, []);
 
@@ -246,7 +247,8 @@ export default function App() {
           onRefreshAgents={poll}
           unread={inbox.filter(i => !i.read).length}
           connected={state.connected}
-          gpu={state.gpu}
+          engine={state.engine}
+          accelerated={state.accelerated}
           tps={state.tps}
         />
       )}

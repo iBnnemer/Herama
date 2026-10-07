@@ -2,7 +2,7 @@ import type { Agent } from "./types";
 
 export const BASE = "http://127.0.0.1:11434";
 
-export interface Health { gpu_offload?: boolean; llama_cpp?: string }
+export interface Health { engine?: string; accelerated?: boolean | null }
 
 export async function fetchHealth(): Promise<Health | null> {
   try {

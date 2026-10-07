@@ -56,7 +56,8 @@ export interface Model {
 
 export interface AppState {
   connected: boolean;
-  gpu: boolean | null;
+  engine: string;
+  accelerated: boolean | null;
   tps: number;
   models: Model[];
   agents: Agent[];

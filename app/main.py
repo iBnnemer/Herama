@@ -36,12 +36,18 @@ async def log_middleware(request: Request, call_next):
     return response
 
 
-def _llama_info() -> dict:
-    try:
+def _engine_info() -> dict:
+    from app import runtime
+    text, accelerated = runtime.label()
+    if text:
+        return {"engine": text, "accelerated": accelerated, "runtime": runtime.status()}
+    try:  # no llama.cpp runtime: report the llama-cpp-python build instead
         import llama_cpp
-        return {"llama_cpp": llama_cpp.__version__, "gpu_offload": bool(llama_cpp.llama_supports_gpu_offload())}
+        gpu = bool(llama_cpp.llama_supports_gpu_offload())
+        return {"engine": "llama-cpp-python " + ("GPU" if gpu else "CPU only"), "accelerated": gpu,
+                "runtime": runtime.status()}
     except Exception:
-        return {}
+        return {"runtime": runtime.status()}
 
 
 @app.get("/health")
@@ -52,7 +58,7 @@ def health():
         "status": "ok",
         "model": loaded["name"] if loaded else None,
         "models_available": len(list(config.MODELS_DIR.glob("**/*.gguf"))),
-        **_llama_info(),
+        **_engine_info(),
     }
 
 
@@ -60,6 +66,12 @@ app.include_router(ollama.router)
 app.include_router(memory.router)
 app.include_router(skills.router)
 app.include_router(agents.router)
+
+
+@app.on_event("startup")
+def _prepare_runtime():
+    from app import runtime
+    runtime.start_background()
 
 # added last so it is the outermost layer and answers preflight before auth
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])

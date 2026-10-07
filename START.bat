@@ -18,9 +18,6 @@ if errorlevel 1 goto :no_node
 
 echo [1/3] Installing Python dependencies...
 python -m pip install --upgrade pip --disable-pip-version-check >> "%LOG%" 2>&1
-python -m pip install llama-cpp-python --prefer-binary --only-binary=llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --disable-pip-version-check >> "%LOG%" 2>&1
-if errorlevel 1 goto :llama_fail
-:after_llama
 python -m pip install fastapi "uvicorn[standard]" psutil --disable-pip-version-check >> "%LOG%" 2>&1
 if errorlevel 1 goto :fail
 echo       done.
@@ -43,6 +40,7 @@ cd ..
 echo       done.
 
 echo [3/3] Starting backend and UI...
+echo       The first start also downloads the llama.cpp engine that matches your GPU.
 start "herama-backend" cmd /k "cd /d %~dp0 && python -m uvicorn app.main:app --host 127.0.0.1 --port 11434 --log-level info"
 timeout /t 4 /nobreak >nul
 cd frontend
@@ -53,14 +51,8 @@ echo  Session ended.
 pause
 exit /b 0
 
-:llama_fail
-echo       No pre-built llama-cpp-python wheel found for this Python version.
-echo       The app UI will still open, but model loading needs llama-cpp-python.
-echo       See the log for details.
-goto :after_llama
-
 :no_python
-echo [ERROR] Python not found. Install Python 3.10 to 3.12 from https://www.python.org/downloads/
+echo [ERROR] Python not found. Install Python 3.10 or newer from https://www.python.org/downloads/
 echo         and tick "Add Python to PATH".
 pause
 exit /b 1
