@@ -15,7 +15,7 @@ interface Props {
   onOpenId: (id: string) => void;
   creating: boolean;
   onCloseCreate: () => void;
-  onCreate: (name: string, folders: string[]) => void;
+  onCreate: (name: string, folders: string[], r: { description?: string; instructions?: string }) => void;
   onStartCreate: () => void;
   onUpdate: (id: string, patch: Partial<Project>) => void;
   assist: (messages: ChatMsg[], signal: AbortSignal) => AsyncGenerator<string>;
@@ -30,13 +30,15 @@ const input: React.CSSProperties = {
 };
 const label: React.CSSProperties = { fontSize: 12, color: "var(--text-dim)", margin: "16px 0 6px", textTransform: "uppercase", letterSpacing: "0.08em" };
 
-function NewProject(p: { onClose: () => void; onCreate: (name: string, folders: string[]) => void }) {
+function NewProject(p: { onClose: () => void; assist: Props["assist"]; onCreate: (name: string, folders: string[], r: Result) => void }) {
+  const [wizard, setWizard] = useState(false);
   const [name, setName] = useState("");
   const [folders, setFolders] = useState<string[]>([]);
   const add = async () => {
     const d = await window.herama?.pickFolder();
     if (d && !folders.includes(d)) setFolders([...folders, d]);
   };
+  if (wizard) return <SetupWizard name={name.trim()} folders={folders} assist={p.assist} onClose={p.onClose} onDone={r => p.onCreate(name.trim(), folders, r)} />;
   return (
     <Modal title="New project" onClose={p.onClose}>
       <div style={{ ...label, marginTop: 0 }}>Name</div>
@@ -52,7 +54,7 @@ function NewProject(p: { onClose: () => void; onCreate: (name: string, folders: 
         </div>
       ))}
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
-        <button style={primaryBtn} disabled={!name.trim()} onClick={() => p.onCreate(name.trim(), folders)}>Create</button>
+        <button style={primaryBtn} disabled={!name.trim()} onClick={() => setWizard(true)}>Next</button>
       </div>
     </Modal>
   );
@@ -65,7 +67,7 @@ export default function ProjectsPage(p: Props) {
   return (
     <PageShell title="Projects" hint="A project holds instructions, knowledge folders and a managing agent that every session in it uses."
       action={<button style={primaryBtn} onClick={p.onStartCreate}>New project</button>}>
-      {p.creating && <NewProject onClose={p.onCloseCreate} onCreate={p.onCreate} />}
+      {p.creating && <NewProject onClose={p.onCloseCreate} assist={p.assist} onCreate={p.onCreate} />}
       {p.projects.length === 0 && <Empty text="No projects yet. Create one to get started." />}
       {p.projects.map(pr => {
         const n = p.conversations.filter(c => c.projectId === pr.id).length;
@@ -150,30 +152,20 @@ function ProjectDetail(p: Props & { project: Project }) {
   );
 }
 
-const BLOCK = /```project\s*([\s\S]*?)```/;
+const fence = (tag: string) => new RegExp("```" + tag + "\\s*([\\s\\S]*?)```");
+const KICKOFF = "Help me set up this project.";
 
-/** Chat where the model asks about the project and fills in (or edits) its description and instructions. */
-function ProjectAssistant(p: { project: Project; assist: Props["assist"]; onUpdate: Props["onUpdate"] }) {
-  const pr = p.project;
+interface Result { description?: string; instructions?: string }
+
+/** Chat with the model. When it emits a fenced block named `tag` holding JSON, `onResult` receives it. */
+function AssistantChat(p: { assist: Props["assist"]; system: () => string; tag: string; kickoff: boolean; onResult: (r: Result) => void }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [text, setText] = useState("");
   const [live, setLive] = useState("");
   const [busy, setBusy] = useState(false);
   const ctrl = useRef<AbortController | null>(null);
   const started = useRef(false);
-  const latest = useRef(pr);
-  latest.current = pr;
-
-  const system = () => {
-    const c = latest.current;
-    return `You help the user set up a project in an AI assistant workspace. Project name: ${c.name}. ` +
-      `Linked folders: ${projectFolders(c).join(", ") || "none"}. ` +
-      `Current description: ${c.description || "(empty)"}. Current instructions: ${c.instructions || "(empty)"}. ` +
-      "Talk in the user's language. Ask at most two short questions at a time about what the project is for and how the assistant should behave. " +
-      "As soon as you can, or when the user asks for a change, reply with a short message plus a fenced block exactly like:\n" +
-      "```project\n{\"description\": \"one sentence\", \"instructions\": \"full instructions\"}\n```\n" +
-      "The block must always contain the complete updated values.";
-  };
+  const block = fence(p.tag);
 
   const run = async (history: ChatMsg[]) => {
     const c = new AbortController();
@@ -182,7 +174,7 @@ function ProjectAssistant(p: { project: Project; assist: Props["assist"]; onUpda
     setLive("");
     let out = "";
     try {
-      for await (const piece of p.assist([{ role: "system", content: system() }, ...history], c.signal)) {
+      for await (const piece of p.assist([{ role: "system", content: p.system() }, ...history], c.signal)) {
         out += piece;
         setLive(splitThink(out).answer);
       }
@@ -190,40 +182,36 @@ function ProjectAssistant(p: { project: Project; assist: Props["assist"]; onUpda
       if (!(e instanceof DOMException && e.name === "AbortError")) out += `${out ? "\n" : ""}[error] ${String(e)}`;
     }
     const answer = splitThink(out).answer;
-    const m = answer.match(BLOCK);
-    if (m) {
-      try {
-        const j = JSON.parse(m[1]) as { description?: string; instructions?: string };
-        p.onUpdate(pr.id, { ...(j.description ? { description: j.description } : {}), ...(j.instructions ? { instructions: j.instructions } : {}) });
-      } catch { /* ignore malformed block */ }
-    }
     if (answer) setMsgs([...history, { role: "assistant", content: answer }]);
     setLive("");
     setBusy(false);
     ctrl.current = null;
+    const m = answer.match(block);
+    if (m) {
+      try { p.onResult(JSON.parse(m[1]) as Result); } catch { /* ignore malformed block */ }
+    }
   };
 
   useEffect(() => {
-    if (started.current || pr.instructions) return;
+    if (started.current || !p.kickoff) return;
     started.current = true;
-    void run([{ role: "user", content: "Help me set up this project." }]);
+    void run([{ role: "user", content: KICKOFF }]);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = () => {
     if (!text.trim() || busy) return;
-    const history: ChatMsg[] = [...(msgs.length ? msgs : []), { role: "user", content: text.trim() }];
+    const history: ChatMsg[] = [...msgs, { role: "user", content: text.trim() }];
     setMsgs(history);
     setText("");
     void run(history);
   };
 
-  const show = (m: ChatMsg) => m.content.replace(BLOCK, "(description and instructions updated)").trim();
-  const shown = msgs.filter((m, i) => !(i === 0 && m.content === "Help me set up this project."));
+  const show = (m: ChatMsg) => m.content.replace(block, "(saved)").trim();
+  const shown = msgs.filter((m, i) => !(i === 0 && m.content === KICKOFF));
 
   return (
-    <div style={{ ...card, marginBottom: 8 }}>
-      <div style={{ fontSize: 12, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Project assistant</div>
-      <div style={{ maxHeight: 280, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+    <div>
+      <div style={{ maxHeight: 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
         {shown.length === 0 && !busy && <div style={{ fontSize: 12, color: "var(--text-dim)" }}>Tell the model what you want to change in the description or instructions.</div>}
         {shown.map((m, i) => (
           <div key={i} style={{ fontSize: 13, whiteSpace: "pre-wrap", alignSelf: m.role === "user" ? "flex-end" : "flex-start", background: m.role === "user" ? "var(--bg2)" : "transparent", borderRadius: 8, padding: m.role === "user" ? "6px 10px" : 0 }}>{show(m)}</div>
@@ -238,5 +226,59 @@ function ProjectAssistant(p: { project: Project; assist: Props["assist"]; onUpda
           : <button style={primaryBtn} disabled={!text.trim()} onClick={send}>Send</button>}
       </div>
     </div>
+  );
+}
+
+const COMPACT = "Keep the saved text compact so it does not use much of the model's context: the description is one sentence, the instructions are at most about 150 words of short imperative lines.";
+
+/** Editing chat on the project page: the model updates description and instructions from the conversation. */
+function ProjectAssistant(p: { project: Project; assist: Props["assist"]; onUpdate: Props["onUpdate"] }) {
+  const pr = p.project;
+  const latest = useRef(pr);
+  latest.current = pr;
+  const system = () => {
+    const c = latest.current;
+    return `You help the user edit a project in an AI assistant workspace. Project name: ${c.name}. ` +
+      `Linked folders: ${projectFolders(c).join(", ") || "none"}. ` +
+      `Current description: ${c.description || "(empty)"}. Current instructions: ${c.instructions || "(empty)"}. ` +
+      "Talk in the user's language. When the user asks for a change, reply with a short message plus a fenced block exactly like:\n" +
+      "```project\n{\"description\": \"one sentence\", \"instructions\": \"full instructions\"}\n```\n" +
+      `The block always contains the complete updated values. ${COMPACT}`;
+  };
+  return (
+    <div style={{ ...card, marginBottom: 8 }}>
+      <div style={{ fontSize: 12, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Project assistant</div>
+      <AssistantChat assist={p.assist} system={system} tag="project" kickoff={false}
+        onResult={r => p.onUpdate(pr.id, { ...(r.description ? { description: r.description } : {}), ...(r.instructions ? { instructions: r.instructions } : {}) })} />
+    </div>
+  );
+}
+
+/** Guided setup: description, then structure and instructions, then the project is created from what was agreed. */
+function SetupWizard(p: { name: string; folders: string[]; assist: Props["assist"]; onDone: (r: Result) => void; onClose: () => void }) {
+  const [tree, setTree] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      const k = p.folders.length && window.herama?.fsKnowledge ? await window.herama.fsKnowledge(p.folders, 0).catch(() => undefined) : undefined;
+      setTree(k?.tree ?? "");
+    })();
+  }, [p.folders]);
+  const system = () =>
+    `You are setting up a new project called "${p.name}" in an AI assistant workspace together with the user. Talk in the user's language. ` +
+    `Linked folders: ${p.folders.join(", ") || "none"}.${tree ? ` File tree:\n${tree.slice(0, 4000)}\n` : ""}\n` +
+    "Follow these steps, one at a time, with short messages: " +
+    "1) Ask the user to describe the project. Restate it in one sentence and ask them to confirm. " +
+    "2) Ask about the project structure and how the assistant should behave (rules, tone, conventions). Summarize and ask them to confirm. " +
+    "3) Keep going until the user explicitly approves. Only after the user approves, reply with a short closing message and the final block exactly like:\n" +
+    "```final_project\n{\"description\": \"one sentence\", \"instructions\": \"instructions\"}\n```\n" +
+    `Never output the block before approval. ${COMPACT}`;
+  return (
+    <Modal title={`Set up "${p.name}"`} onClose={p.onClose}>
+      {tree === null ? <div style={{ fontSize: 12, color: "var(--text-dim)" }}>Reading folders...</div>
+        : <AssistantChat assist={p.assist} system={system} tag="final_project" kickoff onResult={p.onDone} />}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+        <button style={ghostBtn} onClick={() => p.onDone({})}>Skip setup</button>
+      </div>
+    </Modal>
   );
 }

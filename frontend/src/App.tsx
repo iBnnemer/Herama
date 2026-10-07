@@ -127,8 +127,8 @@ export default function App() {
     setCreatingProject(true);
   };
 
-  const createProject = (name: string, folders: string[]) => {
-    const p: Project = { id: rid(), name, folders };
+  const createProject = (name: string, folders: string[], r: { description?: string; instructions?: string }) => {
+    const p: Project = { id: rid(), name, folders, description: r.description, instructions: r.instructions };
     setProjects(list => [...list, p]);
     selectProject(p);
     setOpenProjectId(p.id);
