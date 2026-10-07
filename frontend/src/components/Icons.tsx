@@ -1,7 +1,7 @@
 export type IconName =
   | "sidebar" | "tasks" | "plan" | "browser" | "terminal" | "files"
   | "gear" | "send" | "chevron" | "close"
-  | "search" | "pin" | "plus" | "trash" | "bolt" | "message" | "box" | "clock";
+  | "search" | "pin" | "plus" | "trash" | "bolt" | "message" | "box" | "clock" | "clip" | "stop";
 
 const PATHS: Record<IconName, JSX.Element> = {
   sidebar: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
@@ -21,6 +21,8 @@ const PATHS: Record<IconName, JSX.Element> = {
   bolt: <path d="M13 3L5 14h6l-1 7 8-11h-6z" />,
   message: <path d="M4 5h16v11H9l-5 4z" />,
   box: <><path d="M3 8l9-5 9 5v8l-9 5-9-5z" /><path d="M3 8l9 5 9-5M12 13v8" /></>,
+  clip: <path d="M21 11l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" />,
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
 };
 

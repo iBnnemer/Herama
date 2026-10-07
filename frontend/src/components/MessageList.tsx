@@ -49,7 +49,13 @@ function MsgRow({ m }: { m: Message }) {
         unicodeBidi: "plaintext",
         textAlign: "start",
       }}>
-        {waiting ? <span className="blink" style={{ color: "var(--accent)" }}>●</span> : m.content}
+        {isUser && (m.images?.length || m.files?.length) ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: m.display ? 8 : 0 }}>
+            {m.images?.map((src, i) => <img key={i} src={src} alt="" style={{ maxHeight: 160, maxWidth: "100%", borderRadius: 10 }} />)}
+            {m.files?.map(f => <span key={f} style={{ fontSize: 12, background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, padding: "3px 8px", color: "var(--text-mid)" }}>{f}</span>)}
+          </div>
+        ) : null}
+        {waiting ? <span className="blink" style={{ color: "var(--accent)" }}>●</span> : (isUser ? (m.display ?? m.content) : m.content)}
         {m.streaming && !waiting && <span className="blink" style={{ color: "var(--accent)", marginInlineStart: 2 }}>▋</span>}
       </div>
     </div>

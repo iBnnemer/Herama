@@ -44,7 +44,7 @@ export async function deleteAgent(id: string): Promise<void> {
   await fetch(`${BASE}/api/agents/${id}`, { method: "DELETE" });
 }
 
-export interface ChatMsg { role: "system" | "user" | "assistant"; content: string }
+export interface ChatMsg { role: "system" | "user" | "assistant"; content: string; images?: string[] }
 
 export async function fetchSkills(): Promise<{ name: string; desc: string }[]> {
   try {
@@ -61,9 +61,11 @@ export async function* streamChat(opts: {
   numCtx: number;
   temperature: number;
   top_p: number;
+  signal?: AbortSignal;
 }): AsyncGenerator<string> {
   const r = await fetch(`${BASE}/api/chat`, {
     method: "POST",
+    signal: opts.signal,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: opts.model,

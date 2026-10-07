@@ -1,4 +1,5 @@
 """llama-cpp model manager: one loaded model, swapped on demand."""
+import os
 import queue
 import threading
 import time
@@ -36,18 +37,33 @@ class Engine:
                 return p
         raise FileNotFoundError(name)
 
-    def load(self, name: str, num_ctx=None, num_gpu=None, keep_alive: int = _DEFAULT_KEEP):
+    def _vision_handler(self, p: Path):
+        """Chat handler for image input; needs the matching mmproj file next to the model."""
+        stem = p.stem.lower()
+        cands = [q for q in p.parent.glob("*.gguf") if q.name.lower().startswith("mmproj")]
+        if not cands:
+            raise RuntimeError("image input needs the matching mmproj .gguf file next to the model")
+        best = max(cands, key=lambda q: len(os.path.commonprefix([stem, q.stem.lower().removeprefix("mmproj-")])))
+        from llama_cpp import llama_chat_format as cf
+        for cls in ("Gemma3ChatHandler", "Llava15ChatHandler"):
+            handler = getattr(cf, cls, None)
+            if handler:
+                return handler(clip_model_path=str(best), verbose=False)
+        raise RuntimeError("this llama-cpp-python build has no multimodal chat handler")
+
+    def load(self, name: str, num_ctx=None, num_gpu=None, keep_alive: int = _DEFAULT_KEEP, vision: bool = False):
         from llama_cpp import Llama
 
         p = self.path(name)
-        key = (p, num_ctx, num_gpu)
+        key = (p, num_ctx, num_gpu, vision)
         if self._key == key:
             self._reset_timer(keep_alive)
             return self._llm
         self.unload()
         self.plan = resources.plan(p, num_ctx, num_gpu)
+        extra = {"chat_handler": self._vision_handler(p)} if vision else {}
         self._llm = Llama(model_path=str(p), n_ctx=self.plan.n_ctx,
-                          n_gpu_layers=self.plan.n_gpu_layers, verbose=False)
+                          n_gpu_layers=self.plan.n_gpu_layers, verbose=False, **extra)
         self._key = key
         self._loaded_name = _norm(name)
         self._loaded_at = time.time()
@@ -108,11 +124,11 @@ class Engine:
                 yield c["choices"][0]["text"]
             yield last or {}
 
-    def chat(self, name: str, messages: list[dict], opts: dict, stream: bool):
+    def chat(self, name: str, messages: list[dict], opts: dict, stream: bool, vision: bool = False):
         """Native chat_completion path. Yields content chunks then final dict."""
         with self._lock:
             keep = opts.get("keep_alive", _DEFAULT_KEEP)
-            llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep)
+            llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, vision=vision)
             kw = self._kw(opts)
             if not stream:
                 r = llm.create_chat_completion(messages=messages, **kw)

@@ -10,6 +10,9 @@ export interface Message {
   content: string;
   ts: number;
   streaming?: boolean;
+  display?: string;
+  images?: string[];
+  files?: string[];
   toolLabel?: string;
   toolStatus?: "running" | "done" | "error";
 }
@@ -91,4 +94,12 @@ export interface Task {
 export interface TaskApi {
   start: (label: string) => string;
   finish: (id: string, status: TaskStatus) => void;
+}
+
+export interface Attachment {
+  id: string;
+  name: string;
+  kind: "image" | "file";
+  dataUrl?: string;
+  text?: string;
 }

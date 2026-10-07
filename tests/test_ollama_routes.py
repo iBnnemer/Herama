@@ -112,3 +112,10 @@ def test_pull_stub():
 
 def test_delete_not_found():
     assert client.request("DELETE", "/api/delete", json={"name": "nope"}).status_code == 404
+
+
+def test_to_openai_converts_images():
+    from app.api.ollama import _to_openai
+    out = _to_openai([{"role": "user", "content": "hi", "images": ["AAAA"]}, {"role": "assistant", "content": "ok"}])
+    assert out[0]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64,AAAA"
+    assert out[1] == {"role": "assistant", "content": "ok"}

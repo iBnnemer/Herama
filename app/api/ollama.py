@@ -173,6 +173,22 @@ def _inject_memory(messages: list[dict], query: str) -> list[dict]:
     return [{"role": "system", "content": block}] + list(messages)
 
 
+def _to_openai(messages: list[dict]) -> list[dict]:
+    """Ollama-style {"images": [base64]} messages -> OpenAI content parts."""
+    out = []
+    for m in messages:
+        imgs = m.get("images") or []
+        if not imgs:
+            out.append({k: v for k, v in m.items() if k != "images"})
+            continue
+        parts = [{"type": "text", "text": m.get("content", "")}]
+        for b in imgs:
+            url = b if b.startswith("data:") else f"data:image/jpeg;base64,{b}"
+            parts.append({"type": "image_url", "image_url": {"url": url}})
+        out.append({"role": m.get("role", "user"), "content": parts})
+    return out
+
+
 @router.post("/chat")
 def chat(r: ChatReq):
     try:
@@ -183,7 +199,8 @@ def chat(r: ChatReq):
     t0 = time.perf_counter_ns()
     last_user = next((m["content"] for m in reversed(r.messages) if m.get("role") == "user"), "")
     msgs = _inject_memory(r.messages, last_user) if r.memory and last_user else r.messages
-    gen = engine.chat(r.model, msgs, r.options, r.stream)
+    has_images = any(m.get("images") for m in msgs)
+    gen = engine.chat(r.model, _to_openai(msgs), r.options, r.stream, vision=has_images)
 
     def _msg(text: str) -> dict:
         return {"role": "assistant", "content": text}
