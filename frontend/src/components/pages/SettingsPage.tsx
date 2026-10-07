@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppState, Conversation, Effort, Safety } from "../../types";
 import { EFFORT_LEVELS, EFFORT_PARAMS } from "../../types";
 import type { Prefs } from "../../prefs";
-import { BASE, fetchSkills, loadTools } from "../../api";
-import type { ToolInfo } from "../../api";
+import { BASE, deleteProvider, fetchSkills, listProviders, loadTools, saveProvider, testProvider } from "../../api";
+import type { ApiProvider, ToolInfo } from "../../api";
 import { approvals, describeKey } from "../../approvals";
 import Icon from "../Icons";
-import { card, ghostBtn, Empty } from "./PageShell";
+import { card, ghostBtn, primaryBtn, Empty } from "./PageShell";
 import ModelHub from "./ModelHub";
 
 interface Props {
@@ -23,6 +23,7 @@ interface Props {
   onContext: (n: number) => void;
   onEffort: (e: Effort) => void;
   onSafety: (s: Safety) => void;
+  onModelsChanged: () => void;
   target?: string;
 }
 
@@ -35,7 +36,7 @@ const SECTIONS: Section[] = [
   { id: "safety", label: "Safety", subs: [{ id: "approvals", label: "Approvals", keys: "ask plan auto off commands allowed" }] },
   { id: "memory", label: "Memory & Context", subs: [{ id: "facts", label: "Persistent memory", keys: "remember facts" }, { id: "context", label: "Context & compression", keys: "summary summarize" }] },
   { id: "tools", label: "Tools", subs: [{ id: "list", label: "Agent tools", keys: "files web shell git schedule" }] },
-  { id: "providers", label: "Providers", subs: [{ id: "local", label: "Local models", keys: "gguf hugging face download" }] },
+  { id: "providers", label: "Providers", subs: [{ id: "local", label: "Local models", keys: "gguf hugging face download" }, { id: "api", label: "API models", keys: "external openai openrouter groq deepseek key endpoint url" }] },
   { id: "sessions", label: "Sessions", subs: [{ id: "retention", label: "Archive & retention", keys: "delete old history" }, { id: "folder", label: "Default project folder", keys: "directory workspace" }] },
   { id: "plugins", label: "Plugins", subs: [{ id: "skills", label: "Skills", keys: "plugins generated" }] },
   { id: "about", label: "About", subs: [{ id: "version", label: "Version & updates", keys: "update version engine" }] },
@@ -122,6 +123,51 @@ function ToolsList({ connected }: { connected: boolean }) {
               </div>
             ))}
           </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function ApiModels({ connected, onSaved }: { connected: boolean; onSaved: () => void }) {
+  const [presets, setPresets] = useState<Record<string, string>>({});
+  const [items, setItems] = useState<ApiProvider[]>([]);
+  const blank = { id: "", label: "", provider: "OpenAI", model: "", base_url: "", api_key: "" };
+  const [f, setF] = useState(blank);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => listProviders().then(d => { setPresets(d.presets); setItems(d.items); if (!f.base_url && !f.id) setF(v => ({ ...v, base_url: d.presets[v.provider] ?? "" })); }).catch(() => {});
+  useEffect(() => { if (connected) void load(); }, [connected]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!connected) return <Empty text="Backend offline." />;
+  const set = (patch: Partial<typeof f>) => { setF(v => ({ ...v, ...patch })); setMsg(null); };
+  const run = async (fn: () => Promise<void>) => { setBusy(true); try { await fn(); } catch (e) { setMsg({ ok: false, text: String((e as Error).message ?? e) }); } finally { setBusy(false); } };
+  const row = (label: string, el: React.ReactNode) => <Field label={label}>{el}</Field>;
+  return (
+    <>
+      <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 10, lineHeight: 1.6 }}>
+        Use a model hosted by a provider that speaks the OpenAI chat API. Saved models appear in the model list as api:name. The key is stored only in this computer's .memory folder and is sent only to the address you enter. Conversations with an API model leave this computer.
+      </div>
+      {row("Provider", <select style={input} value={f.provider} onChange={e => set({ provider: e.target.value, base_url: presets[e.target.value] ?? f.base_url })}>{Object.keys(presets).map(k => <option key={k}>{k}</option>)}</select>)}
+      {row("Model", <input style={{ ...input, width: 260 }} value={f.model} onChange={e => set({ model: e.target.value })} placeholder="e.g. gpt-4o-mini" />)}
+      {row("API key", <input style={{ ...input, width: 260 }} type="password" value={f.api_key} onChange={e => set({ api_key: e.target.value })} placeholder={f.id && items.find(i => i.id === f.id)?.has_key ? "saved (leave empty to keep)" : "sk-..."} autoComplete="off" />)}
+      {row("URL", <input style={{ ...input, width: 260 }} value={f.base_url} onChange={e => set({ base_url: e.target.value })} placeholder="https://.../v1" />)}
+      {row("Name (optional)", <input style={{ ...input, width: 260 }} value={f.label} onChange={e => set({ label: e.target.value })} placeholder="shown in the model list" />)}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0 18px" }}>
+        <button style={ghostBtn} disabled={busy} onClick={() => void run(async () => { const r = await testProvider(f); setMsg({ ok: r.ok, text: r.ok ? `Works. Reply: ${r.detail}` : r.detail }); })}>Test</button>
+        <button style={primaryBtn} disabled={busy} onClick={() => void run(async () => { await saveProvider(f); setF(blank); setMsg({ ok: true, text: "Saved." }); await load(); onSaved(); })}>Save</button>
+        {f.id && <button style={ghostBtn} onClick={() => { setF(blank); setMsg(null); }}>Cancel edit</button>}
+        {msg && <span style={{ fontSize: 12, color: msg.ok ? "var(--green)" : "var(--red)", wordBreak: "break-word", minWidth: 0 }}>{msg.text}</span>}
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-mid)", margin: "0 2px 6px" }}>Saved</div>
+      {items.length === 0 && <Empty text="No API models yet." />}
+      {items.map(i => (
+        <div key={i.id} style={{ ...card, display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600 }}>{i.label}</div>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", wordBreak: "break-all" }}>{i.provider} - {i.model} - {i.base_url}{i.has_key ? ` - key ...${i.key_hint}` : " - no key"}</div>
+          </div>
+          <button style={ghostBtn} onClick={() => { setF({ id: i.id, label: i.label, provider: i.provider, model: i.model, base_url: i.base_url, api_key: "" }); setMsg(null); }}>Edit</button>
+          <button style={ghostBtn} onClick={() => void deleteProvider(i.id).then(() => { void load(); onSaved(); }).catch(() => {})}>Delete</button>
         </div>
       ))}
     </>
@@ -242,6 +288,7 @@ export default function SettingsPage(p: Props) {
             {state.connected ? <ModelHub installed={state.models.map(m => m.name)} /> : <Empty text="Backend offline." />}
           </>
         );
+      case "providers/api": return <ApiModels connected={state.connected} onSaved={p.onModelsChanged} />;
       case "sessions/retention":
         return (
           <>

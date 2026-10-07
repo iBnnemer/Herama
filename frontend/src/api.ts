@@ -68,6 +68,21 @@ export async function deleteAgent(id: string): Promise<void> {
   await fetch(`${BASE}/api/agents/${id}`, { method: "DELETE" });
 }
 
+export interface ApiProvider { id: string; label: string; provider: string; model: string; base_url: string; has_key: boolean; key_hint: string }
+export interface ApiProviderIn { id?: string; label: string; provider: string; model: string; base_url: string; api_key: string }
+
+async function providerJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(`${BASE}/api/providers${path}`, init);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail ?? `request failed (${r.status})`);
+  return r.json() as Promise<T>;
+}
+const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+export const listProviders = () => providerJson<{ presets: Record<string, string>; items: ApiProvider[] }>("");
+export const saveProvider = (p: ApiProviderIn) => providerJson<ApiProvider>("", post(p));
+export const testProvider = (p: ApiProviderIn) => providerJson<{ ok: boolean; detail: string }>("/test", post(p));
+export const deleteProvider = (id: string) => providerJson<{ ok: boolean }>(`/${id}`, { method: "DELETE" });
+
 export interface ToolCall { id: string; type: "function"; function: { name: string; arguments: string } }
 export interface ChatMsg { role: "system" | "user" | "assistant" | "tool"; content: string; images?: string[]; tool_calls?: ToolCall[]; tool_call_id?: string }
 

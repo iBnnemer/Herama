@@ -400,7 +400,7 @@ export default function App() {
             onModel={m => setState(s => ({ ...s, activeModel: m }))}
             onContext={n => setState(s => { const tune = { ...s.tune }; delete tune[s.activeModel]; return { ...s, contextLength: n, tune }; })}
             onEffort={e => setState(s => ({ ...s, effort: e }))} onSafety={v => setState(s => ({ ...s, safety: v }))}
-            target={settingsTarget} />
+            onModelsChanged={() => { void poll(); }} target={settingsTarget} />
         </div>
       )}
       {monitorOpen && <MonitorModal onClose={() => setMonitorOpen(false)} />}

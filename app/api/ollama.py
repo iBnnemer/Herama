@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app import resources
+from app import remote, resources
 from app.engine import engine
 from app.memory.store import memory
 
@@ -33,6 +33,9 @@ def tags():
             "digest": hashlib.sha256(f"{p}{st.st_mtime}".encode()).hexdigest(),
             "details": {"format": "gguf", "family": "", "parameter_size": "", "quantization_level": ""},
         })
+    for n in remote.names():  # external API models are listed beside the local files
+        out.append({"name": n, "model": n, "modified_at": _now(), "size": 0, "digest": "",
+                    "details": {"format": "api", "family": "", "parameter_size": "", "quantization_level": ""}})
     return {"models": out}
 
 
@@ -193,17 +196,20 @@ def _to_openai(messages: list[dict]) -> list[dict]:
 
 @router.post("/chat")
 def chat(r: ChatReq):
-    try:
-        engine.path(r.model)
-    except FileNotFoundError:
-        raise HTTPException(404, f"model '{r.model}' not found")
+    ext = remote.find(r.model)
+    if not ext:
+        try:
+            engine.path(r.model)
+        except FileNotFoundError:
+            raise HTTPException(404, f"model '{r.model}' not found")
 
     t0 = time.perf_counter_ns()
     last_user = next((m["content"] for m in reversed(r.messages) if m.get("role") == "user"), "")
     msgs = _inject_memory(r.messages, last_user, r.agent or None) if r.memory and last_user else r.messages
     has_images = any(m.get("images") for m in msgs)
     opts = {**r.options, "tools": r.tools} if r.tools else r.options
-    gen = engine.chat(r.model, _to_openai(msgs), opts, r.stream, vision=has_images)
+    gen = (remote.chat(ext, _to_openai(msgs), opts, r.stream) if ext
+           else engine.chat(r.model, _to_openai(msgs), opts, r.stream, vision=has_images))
 
     def _msg(text: str) -> dict:
         return {"role": "assistant", "content": text}
