@@ -4,7 +4,7 @@ import type {
   View, Project, Job, InboxItem,
 } from "./types";
 import { EFFORT_PARAMS } from "./types";
-import { fetchHealth, fetchModels, fetchAgents, streamChat } from "./api";
+import { fetchHealth, fetchModels, fetchAgents, streamChat, retryRuntime } from "./api";
 import { rid } from "./util";
 import { usePersistent } from "./hooks/usePersistent";
 import Sidebar from "./components/Sidebar";
@@ -40,7 +40,7 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("chat");
   const [view, setView] = useState<View>("chat");
   const [state, setState] = useState<AppState>({
-    connected: false, engine: "", accelerated: null, tps: 0, models: [], agents: [],
+    connected: false, engine: "", accelerated: null, runtime: null, tps: 0, models: [], agents: [],
     activeModel: "", contextLength: 4096, effort: "medium",
   });
   const [conversations, setConversations] = usePersistent<Conversation[]>("herama.convs", [newConv()], reviveConvs);
@@ -83,7 +83,7 @@ export default function App() {
     setState(s => {
       const models: Model[] = mr.status === "fulfilled" ? mr.value : s.models;
       const agents: Agent[] = ar.status === "fulfilled" ? ar.value : s.agents;
-      return { ...s, connected, engine, accelerated, models, agents, activeModel: models.some(m => m.name === s.activeModel) ? s.activeModel : (models[0]?.name ?? "") };
+      return { ...s, connected, engine, accelerated, runtime: health.runtime ?? null, models, agents, activeModel: models.some(m => m.name === s.activeModel) ? s.activeModel : (models[0]?.name ?? "") };
     });
   }, []);
 
@@ -211,7 +211,7 @@ export default function App() {
         return <ProjectsPage projects={projects} conversations={conversations} activeProjectId={activeProjectId}
           onAdd={addProject} onOpen={p => { selectProject(p); }} onNewSession={id => createConv({ projectId: id })} onRemove={removeProject} />;
       case "capabilities":
-        return <CapabilitiesPage models={state.models} connected={state.connected} />;
+        return <CapabilitiesPage models={state.models} connected={state.connected} engine={state.engine} runtime={state.runtime} onRetry={() => { void retryRuntime().then(poll); }} />;
       case "messaging":
         return <MessagingPage items={inbox} onDelete={id => setInbox(l => l.filter(i => i.id !== id))} onClear={() => setInbox([])} />;
       case "artifacts":

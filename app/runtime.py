@@ -219,7 +219,9 @@ def start_background() -> None:
             return
         if _thread and _thread.is_alive():
             return
-        _state.update(state="downloading", backend=detect_backend(), progress=0.0, error="")
+        backend = detect_backend()
+        log.info("runtime: detected backend=%s cuda=%s gpus=%s", backend, nvidia_cuda_version(), gpu_names())
+        _state.update(state="downloading", backend=backend, progress=0.0, error="")
         _thread = threading.Thread(target=_install_safe, args=(_state["backend"],), daemon=True)
         _thread.start()
 
@@ -270,6 +272,8 @@ def status() -> dict:
 def label() -> tuple[str, bool | None]:
     """(text for the UI, accelerated?) describing the engine currently in use."""
     st = status()
+    if st["state"] == "error" and not current_backend():
+        return "engine download failed", False
     if st["state"] == "downloading":
         return f"downloading runtime {int(st['progress'] * 100)}%", None
     b = current_backend()

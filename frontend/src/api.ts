@@ -2,7 +2,12 @@ import type { Agent } from "./types";
 
 export const BASE = "http://127.0.0.1:11434";
 
-export interface Health { engine?: string; accelerated?: boolean | null }
+export interface RuntimeInfo { state: string; backend: string; progress: number; error: string }
+export interface Health { engine?: string; accelerated?: boolean | null; runtime?: RuntimeInfo }
+
+export async function retryRuntime(): Promise<void> {
+  try { await fetch(`${BASE}/api/runtime/retry`, { method: "POST" }); } catch { /* backend offline */ }
+}
 
 export async function fetchHealth(): Promise<Health | null> {
   try {

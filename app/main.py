@@ -68,6 +68,19 @@ app.include_router(skills.router)
 app.include_router(agents.router)
 
 
+@app.get("/api/runtime")
+def runtime_status():
+    from app import runtime
+    return {**runtime.status(), "installed": runtime.current_backend()}
+
+
+@app.post("/api/runtime/retry")
+def runtime_retry():
+    from app import runtime
+    runtime.start_background()
+    return runtime.status()
+
+
 @app.on_event("startup")
 def _prepare_runtime():
     from app import runtime

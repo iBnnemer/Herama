@@ -58,6 +58,7 @@ export interface AppState {
   connected: boolean;
   engine: string;
   accelerated: boolean | null;
+  runtime: { state: string; backend: string; progress: number; error: string } | null;
   tps: number;
   models: Model[];
   agents: Agent[];

@@ -161,7 +161,7 @@ export default function Sidebar(p: Props) {
         <span style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: p.connected ? "var(--green)" : "var(--border2)" }} />
         <span>{p.connected ? (p.tps > 0 ? `${p.tps.toFixed(1)} t/s` : "backend online") : "backend offline"}</span>
         {p.connected && p.engine && (
-          <span title="inference engine in use" style={{ marginLeft: "auto", color: p.accelerated === false ? "var(--accent)" : "var(--text-mid)" }}>
+          <span title="inference engine in use - details under Capabilities" style={{ marginLeft: "auto", color: p.accelerated === false ? "var(--accent)" : "var(--text-mid)" }}>
             {p.engine}
           </span>
         )}

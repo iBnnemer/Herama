@@ -1,16 +1,33 @@
 import { useEffect, useState } from "react";
 import type { Model } from "../../types";
 import { fetchSkills } from "../../api";
-import PageShell, { card, Empty } from "./PageShell";
+import PageShell, { card, ghostBtn, Empty } from "./PageShell";
 
-export default function CapabilitiesPage({ models, connected }: { models: Model[]; connected: boolean }) {
+interface Props {
+  models: Model[];
+  connected: boolean;
+  engine: string;
+  runtime: { state: string; backend: string; progress: number; error: string } | null;
+  onRetry: () => void;
+}
+
+export default function CapabilitiesPage({ models, connected, engine, runtime, onRetry }: Props) {
   const [skills, setSkills] = useState<{ name: string; desc: string }[]>([]);
 
   useEffect(() => { if (connected) fetchSkills().then(setSkills); }, [connected]);
 
   return (
     <PageShell title="Capabilities" hint="What this local backend can use right now.">
-      <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "8px 0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Models</h2>
+      <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "8px 0", textTransform: "uppercase", letterSpacing: "0.08em" }}>Inference engine</h2>
+      <div style={{ ...card, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{engine || "unknown"}</div>
+          {runtime?.error && <div style={{ fontSize: 12, color: "var(--red)", marginTop: 4, wordBreak: "break-word" }}>{runtime.error}</div>}
+          {runtime?.state === "downloading" && <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>downloading {Math.round(runtime.progress * 100)}%</div>}
+        </div>
+        {runtime?.state !== "downloading" && <button style={ghostBtn} onClick={onRetry}>Download engine again</button>}
+      </div>
+      <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "20px 0 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Models</h2>
       {models.length === 0 && <Empty text="No models found. Put .gguf files in the models folder." />}
       {models.map(m => <div key={m.name} style={card}>{m.name}</div>)}
       <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "20px 0 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Skills</h2>
