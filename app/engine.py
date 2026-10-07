@@ -77,11 +77,17 @@ class Engine:
         log.info("llama-server: %s backend=%s ngl=%s ctx=%d", p.name, runtime.current_backend(), ngl, n_ctx)
         try:
             return ServerLLM(binary, p, n_ctx, mm, log_path, ngl)
-        except RuntimeError:
-            nxt = runtime.fallback()  # e.g. CUDA build cannot start -> Vulkan -> CPU
-            if nxt is None:
-                raise
-            return ServerLLM(nxt, p, n_ctx, mm, log_path, None if runtime.current_backend() != "cpu" else 0)
+        except RuntimeError as e:
+            log.warning("llama-server failed with ngl=%s: %s", ngl, str(e)[-300:])
+        if ngl not in (None, 0):  # our layer count may be too high: let llama-server fit it itself
+            try:
+                return ServerLLM(binary, p, n_ctx, mm, log_path, None)
+            except RuntimeError as e:
+                log.warning("llama-server failed with automatic layers: %s", str(e)[-300:])
+        nxt = runtime.fallback()  # e.g. CUDA build cannot start -> Vulkan -> CPU
+        if nxt is None:
+            raise RuntimeError("llama-server could not start; see runtime/server.log")
+        return ServerLLM(nxt, p, n_ctx, mm, log_path, None if runtime.current_backend() != "cpu" else 0)
 
     @staticmethod
     def _gpu_layers(p: Path, n_ctx: int) -> int | None:
