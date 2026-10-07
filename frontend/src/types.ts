@@ -23,7 +23,8 @@ export interface Conversation {
   id: string;
   title: string;
   messages: Message[];
-  agentId?: string;
+  agentId?: string;   // for a group chat this is the lead
+  groupId?: string;
   projectId?: string;
   pinned?: boolean;
 }
@@ -60,6 +61,14 @@ export interface Agent {
   system_prompt: string;
 }
 
+/** Agents working together: the lead receives the user's messages and delegates to the members. */
+export interface Group {
+  id: string;
+  name: string;
+  lead: string;
+  members: string[];
+}
+
 export interface Model {
   name: string;
   size?: number;
@@ -75,6 +84,7 @@ export interface AppState {
   tps: number;
   models: Model[];
   agents: Agent[];
+  groups: Group[];
   activeModel: string;
   contextLength: number;
   tune: Record<string, Tune>;

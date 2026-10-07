@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type {
-  Mode, AppState, Agent, Model, Conversation, PanelId, Task, TaskStatus, TaskApi,
+  Mode, AppState, Agent, Group, Model, Conversation, PanelId, Task, TaskStatus, TaskApi,
   View, Project, Job, InboxItem,
 } from "./types";
 import { EFFORT_PARAMS } from "./types";
 import type { ChatMsg, ModelState } from "./api";
 import MonitorModal from "./components/MonitorModal";
-import { fetchModelState, fetchHealth, fetchModels, fetchAgents, streamChat, retryRuntime, approvedTune } from "./api";
+import { fetchModelState, fetchHealth, fetchModels, fetchAgents, fetchGroups, streamChat, retryRuntime, approvedTune } from "./api";
 import { projectFolders, rid, splitThink } from "./util";
 import { usePersistent } from "./hooks/usePersistent";
 import Sidebar from "./components/Sidebar";
@@ -22,7 +22,7 @@ import JobsPage from "./components/pages/JobsPage";
 const POLL_MS = 4000;
 const JOB_TICK_MS = 20_000;
 
-const newConv = (opts: { agentId?: string; projectId?: string } = {}): Conversation => ({
+const newConv = (opts: { agentId?: string; groupId?: string; projectId?: string } = {}): Conversation => ({
   id: rid(), title: "New session", messages: [], ...opts,
 });
 
@@ -53,7 +53,7 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("chat");
   const [view, setView] = useState<View>("chat");
   const [state, setState] = useState<AppState>({
-    connected: false, engine: "", accelerated: null, runtime: null, tps: 0, models: [], agents: [],
+    connected: false, engine: "", accelerated: null, runtime: null, tps: 0, models: [], agents: [], groups: [],
     activeModel: "", contextLength: 65536, tune: {}, effort: "medium", safety: "plan", ...savedSettings(),
   });
   useEffect(() => {
@@ -109,17 +109,18 @@ export default function App() {
     const connected = true;
     const engine = health.engine ?? "";
     const accelerated = typeof health.accelerated === "boolean" ? health.accelerated : null;
-    const [mr, ar] = await Promise.allSettled([fetchModels(), fetchAgents()]);
+    const [mr, ar, gr] = await Promise.allSettled([fetchModels(), fetchAgents(), fetchGroups()]);
     setState(s => {
       const models: Model[] = mr.status === "fulfilled" ? mr.value : s.models;
       const agents: Agent[] = ar.status === "fulfilled" ? ar.value : s.agents;
-      return { ...s, connected, engine, accelerated, runtime: health.runtime ?? null, models, agents, activeModel: models.length === 0 || models.some(m => m.name === s.activeModel) ? s.activeModel : models[0].name };
+      const groups: Group[] = gr.status === "fulfilled" ? gr.value : s.groups;
+      return { ...s, connected, engine, accelerated, runtime: health.runtime ?? null, models, agents, groups, activeModel: models.length === 0 || models.some(m => m.name === s.activeModel) ? s.activeModel : models[0].name };
     });
   }, []);
 
   useEffect(() => { poll(); const t = setInterval(poll, POLL_MS); return () => clearInterval(t); }, [poll]);
 
-  const createConv = (opts: { agentId?: string; projectId?: string } = {}) => {
+  const createConv = (opts: { agentId?: string; groupId?: string; projectId?: string } = {}) => {
     const c = newConv(opts);
     setConversations(prev => [c, ...prev]);
     setActiveConvId(c.id);
@@ -182,7 +183,7 @@ export default function App() {
   const switchMode = (m: Mode) => {
     setMode(m);
     setView("chat");
-    const want = (c: Conversation) => (m === "agents" ? !!c.agentId : !c.agentId);
+    const want = (c: Conversation) => (m === "agents" ? !!c.agentId || !!c.groupId : !c.agentId && !c.groupId);
     const current = conversations.find(c => c.id === activeConvId);
     if (current && want(current)) return;
     const next = conversations.find(want);
@@ -191,9 +192,15 @@ export default function App() {
   };
 
   const openAgent = (a: Agent) => {
-    const existing = conversations.find(c => c.agentId === a.id);
+    const existing = conversations.find(c => c.agentId === a.id && !c.groupId);
     if (existing) { setActiveConvId(existing.id); setView("chat"); }
     else createConv({ agentId: a.id });
+  };
+
+  const openGroup = (g: Group) => {
+    const existing = conversations.find(c => c.groupId === g.id);
+    if (existing) { setActiveConvId(existing.id); setView("chat"); }
+    else createConv({ agentId: g.lead, groupId: g.id });
   };
 
   const selectConv = (id: string) => {
@@ -247,9 +254,10 @@ export default function App() {
 
   const activeConv = conversations.find(c => c.id === activeConvId) ?? conversations[0];
   const activeProject = projects.find(p => p.id === activeConv.projectId);
-  const activeAgent = state.agents.find(a => a.id === (activeConv.agentId ?? activeProject?.agentId));
+  const activeGroup = state.groups.find(g => g.id === activeConv.groupId);
+  const activeAgent = state.agents.find(a => a.id === (activeGroup?.lead ?? activeConv.agentId ?? activeProject?.agentId));
   const title = view === "chat"
-    ? (activeAgent ? `${activeAgent.name} - ${activeConv.title}` : activeConv.title)
+    ? (activeGroup ? `${activeGroup.name} (group)` : activeAgent ? `${activeAgent.name} - ${activeConv.title}` : activeConv.title)
     : VIEW_TITLES[view];
 
   const page = (() => {
@@ -291,7 +299,10 @@ export default function App() {
           onSelectProject={p => { selectProject(p); setOpenProjectId(p.id); setView("projects"); }}
           onAddProject={addProject}
           agents={state.agents}
-          activeAgentId={activeConv.agentId}
+          activeAgentId={activeConv.groupId ? undefined : activeConv.agentId}
+          groups={state.groups}
+          activeGroupId={activeConv.groupId}
+          onOpenGroup={openGroup}
           onOpenAgent={openAgent}
           onRefreshAgents={poll}
           unread={inbox.filter(i => !i.read).length}
@@ -319,6 +330,7 @@ export default function App() {
             key={activeConv.id}
             conv={activeConv}
             agent={activeAgent}
+            group={activeGroup}
             project={activeProject}
             state={state}
             onConvUpdate={updateConv}

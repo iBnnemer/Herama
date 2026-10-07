@@ -1,4 +1,4 @@
-import type { Agent } from "./types";
+import type { Agent, Group } from "./types";
 
 export const BASE = "http://127.0.0.1:11434";
 
@@ -47,6 +47,23 @@ export async function updateAgent(id: string, a: Partial<Agent>): Promise<Agent>
   return r.json();
 }
 
+export async function fetchGroups(): Promise<Group[]> {
+  try {
+    const r = await fetch(`${BASE}/api/groups`);
+    return r.ok ? r.json() : [];
+  } catch { return []; }
+}
+
+async function sendGroup(path: string, method: string, body?: unknown): Promise<Group> {
+  const r = await fetch(`${BASE}/api/groups${path}`, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail ?? `request failed (${r.status})`);
+  return r.json();
+}
+
+export const createGroup = (g: Omit<Group, "id">) => sendGroup("", "POST", g);
+export const updateGroup = (id: string, g: Partial<Group>) => sendGroup(`/${id}`, "PATCH", g);
+export const deleteGroup = (id: string) => sendGroup(`/${id}`, "DELETE");
+
 export async function deleteAgent(id: string): Promise<void> {
   await fetch(`${BASE}/api/agents/${id}`, { method: "DELETE" });
 }
@@ -65,11 +82,11 @@ export function loadTools(): Promise<ToolInfo[]> {
 
 export interface ToolResult { ok: boolean; result: string; needs_access?: { folder: string; write: boolean } }
 
-export async function runTool(name: string, args: Record<string, unknown>, dirs: string[], readDirs: string[] = [], computer = false, agent = "", model = ""): Promise<ToolResult> {
+export async function runTool(name: string, args: Record<string, unknown>, dirs: string[], readDirs: string[] = [], computer = false, agent = "", model = "", group = ""): Promise<ToolResult> {
   try {
     const r = await fetch(`${BASE}/api/tools/run`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, arguments: args, dirs, read_dirs: readDirs, computer, agent, model }),
+      body: JSON.stringify({ name, arguments: args, dirs, read_dirs: readDirs, computer, agent, model, group }),
     });
     return r.ok ? await r.json() as ToolResult : { ok: false, result: `tool request failed (${r.status})` };
   } catch (e) {

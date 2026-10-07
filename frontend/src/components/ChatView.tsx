@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Safety, Agent, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
+import type { Safety, Agent, Group, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune, loadTools, runTool } from "../api";
 import type { ChatMsg, ModelState, ToolCall, ToolInfo, ToolResult } from "../api";
@@ -14,6 +14,7 @@ import InputArea from "./InputArea";
 interface Props {
   conv: Conversation;
   agent?: Agent;
+  group?: Group;
   project?: Project;
   projects: Project[];
   state: AppState;
@@ -33,6 +34,12 @@ interface Queued { text: string; atts: Attachment[] }
 const HISTORY_LIMIT = 40;
 const MAX_ROUNDS = 16;
 const NO_MORE_TOOLS = "(Tool limit reached. Do not call any more tools. Answer now with what you found so far, and say what is still unknown.)";
+const groupHint = (g: Group | undefined, agents: Agent[]) => {
+  if (!g) return "";
+  const names = g.members.map(id => agents.find(a => a.id === id)?.name).filter(Boolean).join(", ");
+  return `You lead the group "${g.name}". Your team: ${names || "(no members yet)"}. Split the user's request into sub-tasks, ask the right members with ask_agent (give each all the context it needs), then combine their answers into one reply for the user. Do simple things yourself.`;
+};
+
 const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory, Agents or Utilities), call use_tools to switch it on. " +
   "Use tools when they help, and never claim you did something you did not do with a tool. " +
   "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
@@ -77,7 +84,7 @@ function fitToContext(msgs: Message[], ctx: number, reserved = 0): Message[] {
 
 const PLAN_HINT = "Plan mode: you may only read, search and look things up. For anything that changes files or runs commands, describe a short numbered plan and do not claim to have changed anything.";
 
-export default function ChatView({ conv, agent, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onManageModels, modelState, onTps, taskApi }: Props) {
+export default function ChatView({ conv, agent, group, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onManageModels, modelState, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -124,7 +131,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
     const knowledge = dirs.length && window.herama?.fsKnowledge
       ? await window.herama.fsKnowledge(dirs, Math.max(0, Math.floor(state.contextLength * 0.4 * 2.5) - instrLen)).catch(() => undefined)
       : undefined;
-    const system = [agent?.system_prompt, state.safety === "plan" ? PLAN_HINT : "", projectContext(project, knowledge)].filter(Boolean).join("\n\n");
+    const system = [agent?.system_prompt, groupHint(group, state.agents), state.safety === "plan" ? PLAN_HINT : "", projectContext(project, knowledge)].filter(Boolean).join("\n\n");
     const history: ChatMsg[] = fitToContext(base
       .filter(m => m.role !== "tool")
       .slice(-HISTORY_LIMIT), state.contextLength, system.length)
@@ -152,7 +159,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
     const lastUser = conv.messages.map(m => m.role).lastIndexOf("user");
     const inherited = conv.messages.slice(Math.max(0, lastUser)).filter(m => m.role === "tool")
       .map(m => all.find(t => t.name === (m.toolLabel ?? "").split(/\s/)[0])?.group).filter((g): g is string => !!g);
-    const active = new Set<string>([...matchGroups(text), ...inherited]);
+    const active = new Set<string>([...matchGroups(text), ...inherited, ...(group ? ["Agents"] : [])]);
     const mentioned = extractPaths(text);   // paths the user wrote are theirs to share: read access without asking
     const saved = (p: string) => approvals.keys(p).map(k => k.slice(p.length));
     grants.current.read = [...new Set([...grants.current.read, ...saved("read:"), ...mentioned])];
@@ -166,7 +173,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
     }
 
     const execWithAccess = async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
-      const go = () => runTool(name, args, [...dirs, ...grants.current.write], grants.current.read, grants.current.computer, agent?.id ?? "default", model);
+      const go = () => runTool(name, args, [...dirs, ...grants.current.write], grants.current.read, grants.current.computer, agent?.id ?? "default", model, group?.id ?? "");
       const res = await go();
       const na = res.needs_access;
       if (!na) return res;

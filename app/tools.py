@@ -70,6 +70,7 @@ class Ctx:
     computer: bool = False                                 # the user approved searching the whole computer
     agent: str = ""                                        # id of the agent calling the tool (its own memory)
     model: str = ""                                        # model the caller is using (default for helper agents)
+    group: str = ""                                        # agent group of the chat: limits who can be asked
 
 
 REGISTRY: dict[str, Tool] = {}
@@ -112,9 +113,9 @@ def _paths(items: list[str] | None) -> list[Path]:
 
 
 def make_ctx(dirs: list[str] | None, read_dirs: list[str] | None = None, computer: bool = False,
-             agent: str = "", model: str = "") -> Ctx:
+             agent: str = "", model: str = "", group: str = "") -> Ctx:
     found = [d for d in _paths(dirs) if d.is_dir()]
-    return Ctx(found or [workspace().resolve()], _paths(read_dirs), computer, agent, model)
+    return Ctx(found or [workspace().resolve()], _paths(read_dirs), computer, agent, model, group)
 
 
 def _inside(p: Path, root: Path) -> bool:
@@ -747,17 +748,31 @@ def _agents() -> list[dict]:
     return agents._load()
 
 
-def _find_agent(who: str) -> dict:
+def _team(ctx) -> list[dict]:
+    """Agents the caller may ask: the other members of its group, or everyone outside a group."""
+    me = ctx.agent or "default"
+    rows = [ag for ag in _agents() if ag["id"] != me]
+    if ctx.group:
+        from app.api import groups
+        g = groups.get(ctx.group)
+        if g is None:
+            raise ToolError("this group no longer exists")
+        ids = {g["lead"], *g["members"]}
+        rows = [ag for ag in rows if ag["id"] in ids]
+    return rows
+
+
+def _find_agent(who: str, ctx) -> dict:
     who = (who or "").strip().lower()
-    for ag in _agents():
+    for ag in _team(ctx):
         if who in (ag["id"].lower(), ag["name"].lower()):
             return ag
-    raise ToolError(f"no agent named '{who}'; call list_agents to see them")
+    raise ToolError(f"no agent named '{who}' that you can ask; call list_agents to see them")
 
 
 @tool("list_agents", "Agents", "read", "List the other agents you can ask for help, with what each one is for.")
 def _list_agents(a, ctx):
-    rows = [ag for ag in _agents() if ag["id"] != (ctx.agent or "default")]
+    rows = _team(ctx)
     return "\n".join(f"{ag['name']} (id {ag['id']}): {(ag.get('system_prompt') or '')[:160]}" for ag in rows) or "There are no other agents."
 
 
@@ -768,7 +783,7 @@ def _list_agents(a, ctx):
 def _ask_agent(a, ctx):
     from app.engine import engine
     from app.memory.store import memory
-    target = _find_agent(a.get("agent"))
+    target = _find_agent(a.get("agent"), ctx)
     task = (a.get("task") or "").strip()
     if not task:
         raise ToolError("task is empty")
@@ -875,7 +890,7 @@ def listing() -> list[dict]:
 
 
 def run(name: str, args: dict, dirs: list[str] | None = None, read_dirs: list[str] | None = None, computer: bool = False,
-        agent: str = "", model: str = "") -> dict:
+        agent: str = "", model: str = "", group: str = "") -> dict:
     """Run one tool. Returns {"ok": bool, "result": str}; problems come back as text for the model to read.
 
     When the tool needs a folder nobody approved yet, the answer also has "needs_access": {"folder", "write"}."""
@@ -884,7 +899,7 @@ def run(name: str, args: dict, dirs: list[str] | None = None, read_dirs: list[st
         return {"ok": False, "result": f"unknown tool: {name}"}
     extra: dict = {}
     try:
-        out = t.fn(args if isinstance(args, dict) else {}, make_ctx(dirs, read_dirs, computer, agent, model))
+        out = t.fn(args if isinstance(args, dict) else {}, make_ctx(dirs, read_dirs, computer, agent, model, group))
         ok = True
     except NeedsAccess as e:
         out, ok, extra = str(e), False, {"needs_access": {"folder": e.folder, "write": e.write}}

@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { Agent, Conversation, Mode, Project, View } from "../types";
+import type { Agent, Conversation, Group, Mode, Project, View } from "../types";
 import AgentModal from "./AgentModal";
+import GroupModal from "./GroupModal";
 import Icon from "./Icons";
 import type { IconName } from "./Icons";
 import { projectFolders } from "../util";
@@ -22,6 +23,9 @@ interface Props {
   onAddProject: () => void;
   agents: Agent[];
   activeAgentId?: string;
+  groups: Group[];
+  activeGroupId?: string;
+  onOpenGroup: (g: Group) => void;
   onOpenAgent: (a: Agent) => void;
   onRefreshAgents: () => void;
   unread: number;
@@ -41,10 +45,11 @@ const NAV: { view: View; label: string; icon: IconName }[] = [
 
 export default function Sidebar(p: Props) {
   const [editAgent, setEditAgent] = useState<Agent | "new" | null>(null);
+  const [editGroup, setEditGroup] = useState<Group | "new" | null>(null);
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
 
-  const sessions = p.conversations.filter(c => !c.agentId);
+  const sessions = p.conversations.filter(c => !c.agentId && !c.groupId);
   const match = (c: Conversation) =>
     !q || c.title.toLowerCase().includes(q) || c.messages.some(m => m.content.toLowerCase().includes(q));
   const pinned = sessions.filter(c => c.pinned && match(c));
@@ -155,6 +160,22 @@ export default function Sidebar(p: Props) {
               <IconBtn icon="gear" title="edit bot" onClick={() => setEditAgent(a)} />
             </div>
           ))}
+          <Label text="Groups" action={<IconBtn icon="plus" title="new group" onClick={() => setEditGroup("new")} />} />
+          {p.groups.length === 0 && <Empty text="no groups yet - a group is a lead bot plus helpers" />}
+          {p.groups.map(g => (
+            <div key={g.id} style={{ display: "flex", alignItems: "center" }}>
+              <div onClick={() => p.onOpenGroup(g)} style={{
+                flex: 1, padding: "7px 10px", borderRadius: 7, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 8, minWidth: 0,
+                background: p.view === "chat" && p.activeGroupId === g.id ? "var(--surface2)" : "transparent",
+                color: p.activeGroupId === g.id ? "var(--text)" : "var(--text-mid)",
+              }}>
+                <span style={{ color: "var(--accent)", fontSize: 8 }}>{"\u25C6"}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>{g.members.length + 1}</span>
+              </div>
+              <IconBtn icon="gear" title="edit group" onClick={() => setEditGroup(g)} />
+            </div>
+          ))}
         </div>
       )}
 
@@ -168,6 +189,14 @@ export default function Sidebar(p: Props) {
         )}
       </div>
 
+      {editGroup !== null && (
+        <GroupModal
+          group={editGroup === "new" ? undefined : editGroup}
+          agents={p.agents}
+          onClose={() => setEditGroup(null)}
+          onSaved={() => { setEditGroup(null); p.onRefreshAgents(); }}
+        />
+      )}
       {editAgent !== null && (
         <AgentModal
           agent={editAgent === "new" ? undefined : editAgent}
