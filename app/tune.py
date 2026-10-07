@@ -40,15 +40,15 @@ def _kv_gb(m: dict, ctx: int, layers: int, name: str = "") -> float:
 
 
 def _speed(size: float, ratio: float, moe: bool, layers: int, ngl: int, cpu_moe: int,
-           hw: dict, quant_factor: float, k_scale: float = 1.0) -> float:
+           hw: dict, quant_factor: float, k_scale: float = 1.0, kv: float = 0.0) -> float:
     g = min(1.0, ngl / layers)
     active = size * ratio / quant_factor
     expert = active * EXPERT_READ_SHARE * k_scale if moe else 0.0
     other = active * (1 - EXPERT_READ_SHARE) if moe else active
     active = expert + other
     expert_gpu = max(0.0, g - cpu_moe / layers) if moe else 0.0
-    gpu_read = other * g + expert * expert_gpu
-    cpu_read = active - gpu_read
+    gpu_read = other * g + expert * expert_gpu + kv * 0.5 * g   # attention reads the filled half of the KV cache
+    cpu_read = active - (gpu_read - kv * 0.5 * g) + kv * 0.5 * (1 - g)
     gpu_bw = hw["gpu_bandwidth"] * hub.GPU_EFFICIENCY
     cpu_bw = hw.get("cpu_bandwidth", hub.CPU_BANDWIDTH)
     sec = (gpu_read / gpu_bw if gpu_read and gpu_bw else 0.0) + cpu_read / cpu_bw
@@ -96,7 +96,7 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
     use_k = max(1, min(experts, top_k)) if (moe and top_k and default_k) else default_k
     k_scale = use_k / default_k if default_k else 1.0
     q = hub._QUANT.search(model.name)
-    tps = _speed(size, ratio, moe, layers, use_ngl, use_moe, hw, hub.quant_speed_factor(q.group(1) if q else ""), k_scale)
+    tps = _speed(size, ratio, moe, layers, use_ngl, use_moe, hw, hub.quant_speed_factor(q.group(1) if q else ""), k_scale, kv)
     return {
         "layers": layers, "moe": moe, "experts": experts, "ctx": ctx, "ctx_train": ctx_train,
         "ngl": use_ngl, "cpu_moe": use_moe, "top_k": use_k, "default_top_k": default_k, "kv_gb": round(kv, 1), "vram_gb": round(vram, 1),
