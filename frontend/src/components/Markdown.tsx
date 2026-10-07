@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { parseBlocks } from "../markdown";
 import type { Block, Inline } from "../markdown";
 
-const cell: CSSProperties = { border: "1px solid var(--border)", padding: "6px 10px", verticalAlign: "top" };
+const cell: CSSProperties = { padding: "8px 14px", verticalAlign: "top", borderTop: "1px solid var(--border)", borderInlineStart: "1px solid var(--border)" };
 
 function inline(nodes: Inline[]): ReactNode[] {
   return nodes.map((n, i) => {
@@ -40,13 +40,15 @@ function block(b: Block, i: number): ReactNode {
       );
     }
     case "table": return (
-      <div key={i} style={{ overflowX: "auto", margin: "0 0 12px" }}>
-        <table dir="auto" style={{ borderCollapse: "collapse", fontSize: 14, minWidth: "50%" }}>
+      <div key={i} style={{ margin: "0 0 14px", border: "1px solid var(--border)", borderRadius: 12, overflow: "auto", width: "fit-content", maxWidth: "100%", background: "var(--surface, transparent)" }}>
+        <table dir="auto" style={{ borderCollapse: "collapse", fontSize: 14, width: "100%" }}>
           <thead>
-            <tr>{b.head.map((h, k) => <th key={k} style={{ ...cell, background: "var(--bg2)", textAlign: b.align[k] ?? "start" }}>{inline(h)}</th>)}</tr>
+            <tr>{b.head.map((h, k) => <th key={k} style={{ ...cell, borderTop: 0, ...(k === 0 ? { borderInlineStart: 0 } : {}), background: "var(--bg2)", fontWeight: 700, textAlign: b.align[k] ?? "start" }}>{inline(h)}</th>)}</tr>
           </thead>
           <tbody>
-            {b.rows.map((r, k) => <tr key={k}>{r.map((c, j) => <td key={j} style={{ ...cell, textAlign: b.align[j] ?? "start" }}>{inline(c)}</td>)}</tr>)}
+            {b.rows.map((r, k) => (
+              <tr key={k}>{r.map((c, j) => <td key={j} style={{ ...cell, ...(j === 0 ? { borderInlineStart: 0 } : {}), textAlign: b.align[j] ?? "start" }}>{inline(c)}</td>)}</tr>
+            ))}
           </tbody>
         </table>
       </div>
