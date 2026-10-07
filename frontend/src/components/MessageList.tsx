@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Message } from "../types";
+import { splitThink } from "../util";
 
 export default function MessageList({ messages }: { messages: Message[] }) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -30,6 +31,8 @@ function MsgRow({ m }: { m: Message }) {
   }
 
   const isUser = m.role === "user";
+  const parts = isUser ? null : splitThink(m.content);
+  const answer = parts ? parts.answer : (m.display ?? m.content);
   const waiting = m.streaming && !m.content;
 
   return (
@@ -55,7 +58,13 @@ function MsgRow({ m }: { m: Message }) {
             {m.files?.map(f => <span key={f} style={{ fontSize: 12, background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, padding: "3px 8px", color: "var(--text-mid)" }}>{f}</span>)}
           </div>
         ) : null}
-        {waiting ? <span className="blink" style={{ color: "var(--accent)" }}>●</span> : (isUser ? (m.display ?? m.content) : m.content)}
+        {parts?.think ? (
+          <details style={{ marginBottom: 10, fontSize: 13, color: "var(--text-dim)" }}>
+            <summary style={{ cursor: "pointer", userSelect: "none" }}>{parts.open ? "Thinking..." : "Thought process"}</summary>
+            <div dir="auto" style={{ marginTop: 6, paddingInlineStart: 12, borderInlineStart: "2px solid var(--border)", whiteSpace: "pre-wrap" }}>{parts.think}</div>
+          </details>
+        ) : null}
+        {waiting ? <span className="blink" style={{ color: "var(--accent)" }}>●</span> : answer}
         {m.streaming && !waiting && <span className="blink" style={{ color: "var(--accent)", marginInlineStart: 2 }}>▋</span>}
       </div>
     </div>

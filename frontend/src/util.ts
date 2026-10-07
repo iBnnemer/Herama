@@ -34,3 +34,11 @@ export async function readAttachment(file: File): Promise<Attachment | string> {
   if (text.includes("\u0000")) return `${name}: binary files are not supported`;
   return { id: rid(), name, kind: "file", text };
 }
+
+/** Split model output into its reasoning (inside <think> tags) and the visible answer. */
+export function splitThink(text: string): { think: string; answer: string; open: boolean } {
+  if (!text.startsWith("<think>")) return { think: "", answer: text, open: false };
+  const end = text.indexOf("</think>");
+  if (end < 0) return { think: text.slice(7), answer: "", open: true };
+  return { think: text.slice(7, end).trim(), answer: text.slice(end + 8).replace(/^\s+/, ""), open: false };
+}

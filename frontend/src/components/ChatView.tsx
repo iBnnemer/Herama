@@ -3,7 +3,7 @@ import type { Agent, Attachment, AppState, Conversation, Effort, Message, TaskAp
 import { EFFORT_PARAMS } from "../types";
 import { streamChat } from "../api";
 import type { ChatMsg } from "../api";
-import { rid } from "../util";
+import { rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
 
@@ -60,7 +60,7 @@ export default function ChatView({ conv, agent, state, onConvUpdate, onModelChan
     const history: ChatMsg[] = base
       .filter(m => m.role !== "tool")
       .slice(-HISTORY_LIMIT)
-      .map(m => ({ role: m.role as "user" | "assistant", content: m.content }));
+      .map(m => ({ role: m.role as "user" | "assistant", content: m.role === "assistant" ? splitThink(m.content).answer : m.content }));
     if (imgs.length) history[history.length - 1].images = imgs.map(a => b64(a.dataUrl!));
     const messages: ChatMsg[] = agent?.system_prompt
       ? [{ role: "system", content: agent.system_prompt }, ...history]
