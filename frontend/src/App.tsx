@@ -1,79 +1,78 @@
-import { useState, useEffect, useCallback } from "react";
-import type { Mode, AppState, Agent, Model } from "./types";
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { Mode, AppState, Agent, Model, Conversation, Effort } from "./types";
 import { fetchHealth, fetchModels, fetchAgents } from "./api";
 import Sidebar from "./components/Sidebar";
-import ChatPanel from "./components/ChatPanel";
-import AgentsPanel from "./components/AgentsPanel";
+import ChatView from "./components/ChatView";
 
 const POLL_MS = 4000;
 
-const DEFAULT_STATE: AppState = {
-  connected: false,
-  tps: 0,
-  models: [],
-  agents: [],
-  activeModel: "",
-  contextLength: 4096,
-};
+let _cid = 0;
+const newConv = (agentId?: string): Conversation => ({
+  id: String(++_cid),
+  title: "new conversation",
+  messages: [],
+  agentId,
+});
 
 export default function App() {
   const [mode, setMode] = useState<Mode>("chat");
-  const [state, setState] = useState<AppState>(DEFAULT_STATE);
+  const [state, setState] = useState<AppState>({
+    connected: false, tps: 0, models: [], agents: [],
+    activeModel: "", contextLength: 4096, effort: "balanced",
+  });
+  const [conversations, setConversations] = useState<Conversation[]>([newConv()]);
+  const [activeConvId, setActiveConvId] = useState<string>(conversations[0].id);
 
   const poll = useCallback(async () => {
     const connected = await fetchHealth();
     if (!connected) { setState(s => ({ ...s, connected: false })); return; }
-    const [models, agents] = await Promise.allSettled([fetchModels(), fetchAgents()]);
+    const [mr, ar] = await Promise.allSettled([fetchModels(), fetchAgents()]);
     setState(s => {
-      const newModels: Model[] = models.status === "fulfilled" ? models.value : s.models;
-      const newAgents: Agent[] = agents.status === "fulfilled" ? agents.value : s.agents;
-      const activeModel = s.activeModel || newModels[0]?.name || "";
-      return { ...s, connected, models: newModels, agents: newAgents, activeModel };
+      const models: Model[] = mr.status === "fulfilled" ? mr.value : s.models;
+      const agents: Agent[] = ar.status === "fulfilled" ? ar.value : s.agents;
+      return { ...s, connected, models, agents, activeModel: s.activeModel || models[0]?.name || "" };
     });
   }, []);
 
-  useEffect(() => {
-    poll();
-    const t = setInterval(poll, POLL_MS);
-    return () => clearInterval(t);
-  }, [poll]);
+  useEffect(() => { poll(); const t = setInterval(poll, POLL_MS); return () => clearInterval(t); }, [poll]);
 
-  const setActiveModel = (m: string) => setState(s => ({ ...s, activeModel: m }));
-  const setContextLength = (n: number) => setState(s => ({ ...s, contextLength: n }));
-  const setTps = (tps: number) => setState(s => ({ ...s, tps }));
-  const refreshAgents = async () => {
-    const agents = await fetchAgents();
-    setState(s => ({ ...s, agents }));
+  const createConv = (agentId?: string) => {
+    const c = newConv(agentId);
+    setConversations(prev => [c, ...prev]);
+    setActiveConvId(c.id);
+    return c;
   };
+
+  const updateConv = (id: string, patch: Partial<Conversation>) =>
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
+
+  const activeConv = conversations.find(c => c.id === activeConvId) ?? conversations[0];
 
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", overflow: "hidden" }}>
       <Sidebar
         mode={mode}
-        onModeChange={setMode}
+        onModeChange={m => { setMode(m); if (m === "chat") createConv(); }}
+        conversations={conversations.filter(c => !c.agentId)}
+        agentConvs={conversations.filter(c => !!c.agentId)}
+        activeConvId={activeConvId}
+        onSelectConv={setActiveConvId}
+        onNewConv={() => createConv()}
+        agents={state.agents}
         connected={state.connected}
         tps={state.tps}
-        agents={state.agents}
-        onRefreshAgents={refreshAgents}
+        onRefreshAgents={poll}
       />
-      <main style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {mode === "chat" ? (
-          <ChatPanel
-            state={state}
-            onModelChange={setActiveModel}
-            onContextChange={setContextLength}
-            onTps={setTps}
-          />
-        ) : (
-          <AgentsPanel
-            state={state}
-            onModelChange={setActiveModel}
-            onContextChange={setContextLength}
-            onTps={setTps}
-            onRefreshAgents={refreshAgents}
-          />
-        )}
-      </main>
+      <ChatView
+        conv={activeConv}
+        state={state}
+        onConvUpdate={p => updateConv(activeConv.id, p)}
+        onNewConv={createConv}
+        onModelChange={m => setState(s => ({ ...s, activeModel: m }))}
+        onContextChange={n => setState(s => ({ ...s, contextLength: n }))}
+        onEffortChange={e => setState(s => ({ ...s, effort: e }))}
+        onTps={t => setState(s => ({ ...s, tps: t }))}
+      />
     </div>
   );
 }
