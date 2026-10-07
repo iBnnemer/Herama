@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
-import type { Attachment, Effort, Model, Tune } from "../types";
+import type { Agent, Attachment, Effort, Model, Project, Safety, Tune } from "../types";
+import Dropdown from "./Dropdown";
 import { readAttachment } from "../util";
 import EffortPicker from "./EffortPicker";
 import SettingsModal from "./SettingsModal";
@@ -19,12 +20,25 @@ interface Props {
   onStop: () => void;
   onModelChange: (m: string) => void;
   onEffortChange: (e: Effort) => void;
+  safety: Safety;
+  onSafetyChange: (s: Safety) => void;
+  projects: Project[];
+  projectId?: string;
+  onProject: (id: string) => void;
+  agents: Agent[];
+  agentName?: string;
+  onAgent: (id: string) => void;
   onContextChange: (n: number, tune?: Tune) => void;
   disabled: boolean;
   placeholder?: string;
 }
 
 const shortName = (n: string) => n.replace(/:latest$/, "");
+const SAFETY = [
+  { id: "plan", label: "Plan", hint: "Plan first: the model proposes steps and runs nothing" },
+  { id: "ask", label: "Ask", hint: "Ask for approval before running commands" },
+  { id: "auto", label: "Auto", hint: "Run commands without asking" },
+];
 
 export default function InputArea(p: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -88,6 +102,11 @@ export default function InputArea(p: Props) {
         </div>
       )}
 
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+        <Dropdown down align="right" title="model" label={p.activeModel ? shortName(p.activeModel) : "Choose a model"} value={p.activeModel}
+          onPick={p.onModelChange} items={p.models.map(m => ({ id: m.name, label: shortName(m.name) }))} />
+      </div>
+
       <div onDragOver={e => e.preventDefault()} onDrop={onDrop} style={{
         background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 18,
         boxShadow: "0 2px 12px rgba(0,0,0,0.3)", padding: "10px 10px 8px 14px",
@@ -107,47 +126,25 @@ export default function InputArea(p: Props) {
             ))}
           </div>
         )}
-        <textarea
-          ref={ref}
-          dir="auto"
-          placeholder={p.placeholder ?? "message herama..."}
-          rows={1}
-          onKeyDown={onKey}
-          onPaste={onPaste}
-          onInput={e => {
-            const t = e.currentTarget;
-            t.style.height = "auto";
-            t.style.height = Math.min(t.scrollHeight, 200) + "px";
-            setHasText(t.value.trim().length > 0);
-          }}
-          style={{
-            width: "100%", padding: "6px 4px", fontSize: 15, lineHeight: 1.5, minHeight: 32,
-            maxHeight: 200, background: "transparent", color: "var(--text)", display: "block",
-          }}
-        />
-        {notice && <div style={{ fontSize: 11, color: "var(--red)", padding: "2px 4px" }}>{notice}</div>}
-        <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-          <input ref={fileRef} type="file" multiple hidden onChange={e => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-          <button onClick={() => fileRef.current?.click()} title="attach files or images (or paste with Ctrl+V)"
-            style={{ ...chip, display: "flex", padding: 6 }}><Icon name="clip" size={15} /></button>
-          <button onClick={() => setShowSettings(true)} title="generation settings"
-            style={{ ...chip, display: "flex", padding: 6 }}><Icon name="gear" size={15} /></button>
-
-          <select
-            value={p.activeModel}
-            onChange={e => p.onModelChange(e.target.value)}
-            style={{ ...chip, maxWidth: 240, textOverflow: "ellipsis", fontFamily: "var(--sans)" }}
-          >
-            {p.models.length === 0 && <option value="">no models</option>}
-            {p.models.map(m => <option key={m.name} value={m.name} style={{ background: "var(--surface)" }}>{shortName(m.name)}</option>)}
-          </select>
-
-          <EffortPicker effort={p.effort} onChange={p.onEffortChange} />
-
-          <span style={{ marginLeft: "auto", marginRight: 8, fontSize: 10, color: "var(--text-dim)" }}>
-            ctx {p.contextLength >= 1024 ? `${Math.round(p.contextLength / 1024)}K` : p.contextLength}
-          </span>
-
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+          <textarea
+            ref={ref}
+            dir="auto"
+            placeholder={p.placeholder ?? "message herama..."}
+            rows={1}
+            onKeyDown={onKey}
+            onPaste={onPaste}
+            onInput={e => {
+              const t = e.currentTarget;
+              t.style.height = "auto";
+              t.style.height = Math.min(t.scrollHeight, 200) + "px";
+              setHasText(t.value.trim().length > 0);
+            }}
+            style={{
+              flex: 1, padding: "6px 4px", fontSize: 15, lineHeight: 1.5, minHeight: 32,
+              maxHeight: 200, background: "transparent", color: "var(--text)", display: "block",
+            }}
+          />
           <button onClick={showStop ? p.onStop : send} disabled={!showStop && !canSend}
             title={showStop ? "stop (Esc)" : p.streaming ? "add to queue" : "send"} style={{
               width: 32, height: 32, borderRadius: 10, flexShrink: 0,
@@ -156,6 +153,27 @@ export default function InputArea(p: Props) {
               display: "flex", alignItems: "center", justifyContent: "center",
             }}><Icon name={showStop ? "stop" : "send"} size={16} /></button>
         </div>
+        {notice && <div style={{ fontSize: 11, color: "var(--red)", padding: "2px 4px" }}>{notice}</div>}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, padding: "0 4px" }}>
+        <input ref={fileRef} type="file" multiple hidden onChange={e => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+        <button onClick={() => fileRef.current?.click()} title="add files or images (or paste with Ctrl+V)"
+          style={{ ...chip, display: "flex", padding: 6 }}><Icon name="plus" size={16} /></button>
+        <Dropdown tinted title="project" icon={<Icon name="box" size={13} />}
+          label={p.projects.find(x => x.id === p.projectId)?.name ?? "No project"} value={p.projectId ?? ""} onPick={p.onProject}
+          items={[{ id: "", label: "No project" }, ...p.projects.map(x => ({ id: x.id, label: x.name }))]} />
+        <Dropdown tinted title="agent" icon={<Icon name="bolt" size={13} />}
+          label={p.agentName ?? "default"} value={p.agents.find(a => a.name === p.agentName)?.id ?? ""} onPick={p.onAgent}
+          items={[{ id: "", label: "default" }, ...p.agents.map(a => ({ id: a.id, label: a.name }))]} />
+        <Dropdown tinted title="commands and safety" icon={<Icon name="shield" size={13} />}
+          label={SAFETY.find(x => x.id === p.safety)?.label ?? "Plan"} value={p.safety}
+          onPick={id => p.onSafetyChange(id as Safety)} items={SAFETY} />
+        <button onClick={() => setShowSettings(true)} title="context and generation settings"
+          style={{ ...chip, marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>
+          ctx {p.contextLength >= 1024 ? `${Math.round(p.contextLength / 1024)}K` : p.contextLength}
+        </button>
+        <EffortPicker effort={p.effort} onChange={p.onEffortChange} />
       </div>
 
       {showSettings && (

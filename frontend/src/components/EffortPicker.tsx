@@ -24,6 +24,7 @@ export default function EffortPicker({ effort, onChange }: Props) {
         background: "transparent", border: "none", borderRadius: 8,
         color: "var(--text-mid)", fontSize: 12,
       }}>
+        <Icon name="bulb" size={14} />
         <span>{EFFORT_PARAMS[effort].label}</span>
         <Icon name="chevron" size={12} />
       </button>

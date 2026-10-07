@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Agent, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
+import type { Safety, Agent, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune } from "../api";
 import type { ChatMsg } from "../api";
@@ -11,11 +11,13 @@ interface Props {
   conv: Conversation;
   agent?: Agent;
   project?: Project;
+  projects: Project[];
   state: AppState;
   onConvUpdate: (id: string, patch: Partial<Conversation>) => void;
   onModelChange: (m: string) => void;
   onContextChange: (n: number, tune?: Tune) => void;
   onEffortChange: (e: Effort) => void;
+  onSafetyChange: (s: Safety) => void;
   onTps: (t: number) => void;
   taskApi: TaskApi;
 }
@@ -40,7 +42,9 @@ function fitToContext(msgs: Message[], ctx: number, reserved = 0): Message[] {
   return kept;
 }
 
-export default function ChatView({ conv, agent, project, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onTps, taskApi }: Props) {
+const PLAN_HINT = "Plan mode: when a request needs actions on the user's machine, describe a short numbered plan and do not claim to have run anything.";
+
+export default function ChatView({ conv, agent, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -78,7 +82,7 @@ export default function ChatView({ conv, agent, project, state, onConvUpdate, on
     const knowledge = dirs.length && window.herama?.fsKnowledge
       ? await window.herama.fsKnowledge(dirs, Math.max(0, Math.floor(state.contextLength * 0.4 * 2.5) - instrLen)).catch(() => undefined)
       : undefined;
-    const system = [agent?.system_prompt, projectContext(project, knowledge)].filter(Boolean).join("\n\n");
+    const system = [agent?.system_prompt, state.safety === "plan" ? PLAN_HINT : "", projectContext(project, knowledge)].filter(Boolean).join("\n\n");
     const history: ChatMsg[] = fitToContext(base
       .filter(m => m.role !== "tool")
       .slice(-HISTORY_LIMIT), state.contextLength, system.length)
@@ -125,7 +129,7 @@ export default function ChatView({ conv, agent, project, state, onConvUpdate, on
       show(full, false);
       setStreaming(false);
     }
-  }, [model, state.effort, state.contextLength, state.tune, conv, agent, project, onConvUpdate, onTps, taskApi]);
+  }, [model, state.effort, state.safety, state.contextLength, state.tune, conv, agent, project, onConvUpdate, onTps, taskApi]);
 
   const submit = (text: string, atts: Attachment[]) => {
     if (streaming) setQueue(q => [...q, { text, atts }]);
@@ -160,6 +164,14 @@ export default function ChatView({ conv, agent, project, state, onConvUpdate, on
         onStop={stop}
         onModelChange={onModelChange}
         onEffortChange={onEffortChange}
+        safety={state.safety}
+        onSafetyChange={onSafetyChange}
+        projects={projects}
+        projectId={conv.projectId}
+        onProject={id => onConvUpdate(conv.id, { projectId: id || undefined })}
+        agents={state.agents}
+        agentName={agent?.name}
+        onAgent={id => onConvUpdate(conv.id, { agentId: id || undefined })}
         onContextChange={onContextChange}
         disabled={!ready}
         placeholder={!state.connected ? "backend offline" : !model ? "no model found - put a .gguf file in the models folder" : agent ? `message ${agent.name}...` : streaming ? "type to queue the next message..." : "message herama..."}
