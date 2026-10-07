@@ -96,7 +96,9 @@ export default function SettingsModal({ model, contextLength, tps, onApply, onCl
           <Row label="KV cache">{plan.kv_gb} GB</Row>
           <Row label="GPU memory" hint={`budget ${plan.vram_budget_gb} GB`}>{plan.vram_gb} GB</Row>
           <Row label="System RAM">{plan.ram_gb} GB</Row>
-          <Row label="Estimated speed"><span style={{ color: "var(--text)", fontWeight: 600 }}>about {plan.tps} tok/s</span></Row>
+          <Row label={plan.calibrated === "measured" ? "Measured speed" : plan.calibrated === "learned" ? "Estimated speed (adjusted from your runs)" : "Estimated speed"}>
+            <span style={{ color: "var(--text)", fontWeight: 600 }}>{plan.calibrated === "measured" ? "" : "about "}{plan.tps} tok/s</span>
+          </Row>
           {!plan.fits && <div style={{ color: "var(--red)", marginTop: 6 }}>These numbers exceed this machine's memory. Lower the context or move more layers to the CPU.</div>}
           {plan.ctx_over_training && <div style={{ color: "var(--red)", marginTop: 6 }}>This context is larger than the model was trained for ({fmtCtx(plan.ctx_train)}). Quality may drop.</div>}
         </div>

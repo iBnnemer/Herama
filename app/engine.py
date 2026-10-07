@@ -6,7 +6,7 @@ import logging
 import time
 from pathlib import Path
 
-from app import config, resources, runtime
+from app import calib, config, resources, runtime
 from app.server_llm import ServerLLM
 
 _DEFAULT_KEEP = 300  # seconds; -1 = indefinite
@@ -75,6 +75,7 @@ class Engine:
             raise RuntimeError("image input needs the matching mmproj .gguf file next to the model")
         log_path = runtime.RUNTIME_DIR / "server.log"
         ngl = self._gpu_layers(p, n_ctx, num_gpu)
+        self._last_ngl = ngl
         log.info("llama-server: %s backend=%s ngl=%s cpu_moe=%s ctx=%d", p.name, runtime.current_backend(), ngl, cpu_moe, n_ctx)
         try:
             return ServerLLM(binary, p, n_ctx, mm, log_path, ngl, cpu_moe, self._expert_override(p, expert_used))
@@ -135,6 +136,8 @@ class Engine:
         if use_server:
             n_ctx = int(num_ctx or 4096)
             self._llm = self._start_server(binary, p, n_ctx, vision, num_gpu, int(cpu_moe or 0), int(expert_used or 0))
+            self._settings = {"model": p.stem, "ctx": n_ctx, "ngl": self._last_ngl,
+                              "cpu_moe": int(cpu_moe or 0), "top_k": int(expert_used or 0)}
             backend = runtime.current_backend()
             self.plan = resources.Plan(n_ctx, 0 if backend == "cpu" else -1, 0, 0)
         else:
@@ -171,6 +174,7 @@ class Engine:
             close()
         self._llm, self._key, self.plan = None, None, None
         self._loaded_name, self._loaded_at = None, 0.0
+        self._settings = None
 
     def ps(self) -> dict | None:
         if not self._loaded_name:
@@ -225,14 +229,30 @@ class Engine:
                 yield msg.get("content", "")
                 yield r
                 return
-            last = None
+            last, t_first = None, 0.0
             for c in llm.create_chat_completion(messages=messages, stream=True, **kw):
                 last = c
+                t_first = t_first or time.perf_counter()
                 delta = c["choices"][0].get("delta", {})
                 text = delta.get("content") or ""
                 if text:
                     yield text
+            self._learn_speed(last, t_first)
             yield last or {}
+
+    def _learn_speed(self, last: dict | None, t_first: float) -> None:
+        """Store the measured generation speed for the settings in use (used to correct estimates)."""
+        st = getattr(self, "_settings", None)
+        tokens = ((last or {}).get("usage") or {}).get("completion_tokens", 0)
+        elapsed = time.perf_counter() - t_first if t_first else 0.0
+        if not st or st["ngl"] is None or tokens < 64 or elapsed < 1.0:
+            return
+        try:
+            layers = int(resources.gguf_meta(self.path(st["model"])).get("block_count") or 0)
+            calib.record(st["model"], st["ctx"], min(st["ngl"], layers) if layers else st["ngl"],
+                         st["cpu_moe"], st["top_k"], tokens / elapsed)
+        except Exception:
+            log.debug("calibration not recorded", exc_info=True)
 
 
 engine = Engine()

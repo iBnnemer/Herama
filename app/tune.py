@@ -2,7 +2,7 @@
 import math
 from pathlib import Path
 
-from app import hub, resources
+from app import calib, hub, resources
 
 GB = 1024 ** 3
 EXPERT_SHARE = 0.88       # share of a MoE file that is expert tensors
@@ -57,9 +57,32 @@ def _speed(size: float, ratio: float, moe: bool, layers: int, ngl: int, cpu_moe:
     return round(1 / sec, 1) if sec > 0 else 0.0
 
 
+def _learned_ratio(model: Path, ctx: int) -> tuple[float, int] | None:
+    """Measured/estimated speed ratio for this model, interpolated over context length."""
+    pts = []
+    for e in calib.entries(model.stem):
+        raw = propose(model, e["ctx"], e["ngl"], e["cpu_moe"], e["top_k"] or None, learn=False)["tps"]
+        if raw > 0:
+            pts.append((math.log2(e["ctx"]), e["tps"] / raw))
+    if not pts:
+        return None
+    pts.sort()
+    x = math.log2(ctx)
+    lo = [p for p in pts if p[0] <= x]
+    hi = [p for p in pts if p[0] >= x]
+    if lo and hi and lo[-1][0] != hi[0][0]:
+        (x0, r0), (x1, r1) = lo[-1], hi[0]
+        r = r0 + (r1 - r0) * (x - x0) / (x1 - x0)
+    else:
+        r = (lo[-1] if lo else hi[0])[1]
+    return min(1.5, max(0.2, r)), len(pts)
+
+
 def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None = None,
-            top_k: int | None = None) -> dict:
-    """Preliminary settings for `ctx`; pass ngl/cpu_moe to re-estimate user-edited values."""
+            top_k: int | None = None, learn: bool = True) -> dict:
+    """Preliminary settings for `ctx`; pass ngl/cpu_moe to re-estimate user-edited values.
+
+    With learn=True the speed is corrected by what this machine measured earlier for this model."""
     hw = hub.hardware()
     m = resources.gguf_meta(model)
     layers = int(m.get("block_count") or 32)
@@ -97,8 +120,16 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
     k_scale = use_k / default_k if default_k else 1.0
     q = hub._QUANT.search(model.name)
     tps = _speed(size, ratio, moe, layers, use_ngl, use_moe, hw, hub.quant_speed_factor(q.group(1) if q else ""), k_scale, kv)
+    learned = ""
+    if learn:
+        exact = next((e for e in calib.entries(model.stem) if e["ctx"] == ctx and e["ngl"] == min(use_ngl, layers)
+                      and e["cpu_moe"] == use_moe and e["top_k"] in (0, use_k)), None)
+        if exact:
+            tps, learned = exact["tps"], "measured"
+        elif (lr := _learned_ratio(model, ctx)):
+            tps, learned = round(tps * lr[0], 1), "learned"
     return {
-        "layers": layers, "moe": moe, "experts": experts, "ctx": ctx, "ctx_train": ctx_train,
+        "calibrated": learned, "layers": layers, "moe": moe, "experts": experts, "ctx": ctx, "ctx_train": ctx_train,
         "ngl": use_ngl, "cpu_moe": use_moe, "top_k": use_k, "default_top_k": default_k, "kv_gb": round(kv, 1), "vram_gb": round(vram, 1),
         "ram_gb": round(max(ram, 0.0), 1), "tps": tps, "size_gb": round(size, 1),
         "fits": vram <= vram_budget + 0.01 and ram <= ram_budget, "vram_budget_gb": round(vram_budget, 1),

@@ -132,6 +132,7 @@ export const hubDownload = (repo: string, file: string, size: number) =>
 export const hubCancel = (id: string) => hubJson<{ ok: boolean }>(`/downloads/${id}`, { method: "DELETE" });
 
 export interface TunePlan {
+  calibrated: "" | "measured" | "learned";
   layers: number; moe: boolean; experts: number; ctx: number; ctx_train: number; ngl: number; cpu_moe: number; top_k: number; default_top_k: number;
   kv_gb: number; vram_gb: number; ram_gb: number; tps: number; size_gb: number; fits: boolean;
   vram_budget_gb: number; ctx_over_training: boolean;

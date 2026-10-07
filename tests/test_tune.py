@@ -80,3 +80,20 @@ def test_per_layer_metadata_arrays(tmp_path, monkeypatch):
             "attention.sliding_window": 1024, "attention.sliding_window_pattern": [1, 1, 1, 1, 1, 0] * 8}
     f = _model(tmp_path, monkeypatch, 7, meta, "gemma-x-Q4_K_M.gguf")
     assert tune.propose(f, 65536)["kv_gb"] < 3
+
+
+def test_calibration_learns_from_measurements(tmp_path, monkeypatch):
+    import app.config as cfg
+    from app import calib
+    (tmp_path / "mem").mkdir()
+    monkeypatch.setattr(cfg, "MEMORY_DIR", tmp_path / "mem")
+    f = _model(tmp_path, monkeypatch, 7, DENSE, "calib-Q4_K_M.gguf")
+    raw = tune.propose(f, 65536)
+    assert raw["calibrated"] == ""
+    calib.record(f.stem, 65536, raw["ngl"], raw["cpu_moe"], 0, raw["tps"] / 2)
+    again = tune.propose(f, 65536)
+    assert again["calibrated"] == "measured" and again["tps"] == round(raw["tps"] / 2, 2)
+    other = tune.propose(f, 131072)            # not measured, but the model runs about half as fast as estimated
+    assert other["calibrated"] == "learned" and 0.4 < other["tps"] / tune.propose(f, 131072, learn=False)["tps"] < 0.6
+    calib.record(f.stem, 65536, raw["ngl"], raw["cpu_moe"], 0, raw["tps"] / 2)
+    assert calib.entries(f.stem)[0]["n"] == 2
