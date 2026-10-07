@@ -50,16 +50,16 @@ const SAFETY: { id: Safety; label: string; hint: string }[] = [
   { id: "off", label: "Off", hint: "No tools at all." },
 ];
 
-const input: React.CSSProperties = { background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", color: "var(--text)", fontSize: 13 };
+const input: React.CSSProperties = { maxWidth: "100%", textOverflow: "ellipsis", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", color: "var(--text)", fontSize: 13 };
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div style={{ ...card, display: "flex", alignItems: "center", gap: 16 }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 140 }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>{label}</div>
         {hint && <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 2, lineHeight: 1.5 }}>{hint}</div>}
       </div>
-      <div>{children}</div>
+      <div style={{ flexShrink: 0, maxWidth: "50%" }}>{children}</div>
     </div>
   );
 }
