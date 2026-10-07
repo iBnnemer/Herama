@@ -390,8 +390,8 @@ def search_roots(all_drives: bool) -> list[Path]:
 
 
 @tool("search_computer", "Files", "read",
-      "Search the user's computer for files by name, or by words inside text files (content=true). Looks in Desktop, Documents, Downloads and similar folders; "
-      "set all_drives=true to look everywhere. Returns paths, newest first. Then use read_file on a result. The user is asked to approve the first search.",
+      "Search the user's computer for files and folders by name, or by words inside text files (content=true). Looks in Desktop, Documents, Downloads and similar folders; "
+      "set all_drives=true to look everywhere. Returns paths, newest first. Then use read_file on a file result, or analyze_folder on a folder result. The user is asked to approve the first search.",
       {"query": S, "content": B, "all_drives": B, "folder": S}, ["query"])
 def _search_computer(a, ctx):
     if not ctx.computer:
@@ -402,10 +402,17 @@ def _search_computer(a, ctx):
     glob = any(c in q for c in "*?[")
     roots = [safe(ctx, a["folder"])] if a.get("folder") else search_roots(bool(a.get("all_drives")))
     deadline = time.time() + SEARCH_SECONDS
-    hits: list[tuple[float, str, int]] = []
+    hits: list[tuple[tuple[int, float], str, int]] = []
     scanned, timed_out = 0, False
     for root in roots:
         for dirpath, dirs, files in os.walk(root):
+            if not a.get("content"):   # folders count too: "find the folder called nmr"
+                for d in dirs:
+                    if (fnmatch.fnmatch(d.lower(), q) if glob else q in d.lower()) and d.lower() not in SYSTEM_SKIP and not _sensitive(Path(dirpath) / d):
+                        try:
+                            hits.append(((int(d.lower() == q), (Path(dirpath) / d).stat().st_mtime), str(Path(dirpath) / d) + "/", 0))
+                        except OSError:
+                            pass
             dirs[:] = [d for d in dirs if d.lower() not in SYSTEM_SKIP and not d.startswith(".") and not _sensitive(Path(dirpath) / d)]
             for f in files:
                 scanned += 1
@@ -429,7 +436,7 @@ def _search_computer(a, ctx):
                     continue
                 try:
                     st = full.stat()
-                    hits.append((st.st_mtime, str(full), st.st_size))
+                    hits.append(((int(f.lower() == q), st.st_mtime), str(full), st.st_size))
                 except OSError:
                     continue
             if timed_out or len(hits) >= 400:
@@ -437,9 +444,81 @@ def _search_computer(a, ctx):
         if timed_out or len(hits) >= 400:
             break
     hits.sort(reverse=True)
-    lines = [f"{p}  ({_fmt_size(sz)}, {datetime.fromtimestamp(m).strftime('%Y-%m-%d')})" for m, p, sz in hits[:100]]
+    lines = [f"{p}  (folder, {datetime.fromtimestamp(m[1]).strftime('%Y-%m-%d')})" if p.endswith("/")
+             else f"{p}  ({_fmt_size(sz)}, {datetime.fromtimestamp(m[1]).strftime('%Y-%m-%d')})" for m, p, sz in hits[:100]]
     note = f"\n[scanned {scanned} files{', stopped after ' + str(SEARCH_SECONDS) + 's - narrow the search' if timed_out else ''}]"
     return ("\n".join(lines) or "No matches.") + note
+
+
+KEY_FILES = ("readme", "package.json", "pyproject.toml", "requirements.txt", "setup.py", "cargo.toml", "go.mod", "pom.xml",
+             "makefile", "dockerfile", "main.py", "app.py", "index.js", "index.ts", "main.ts", "main.rs", "main.go")
+
+
+@tool("analyze_folder", "Files", "read",
+      "Get a full picture of a folder in ONE call: file tree, counts by file type, total size, and the contents of its key files (README, manifests, entry points) and a sample of other text files. "
+      "Use this to understand or summarize a folder instead of listing sub-folders one by one.",
+      {"path": S, "max_chars": I}, ["path"])
+def _analyze_folder(a, ctx):
+    root = safe(ctx, a["path"])
+    if not root.is_dir():
+        raise ToolError(f"{root} is not a folder")
+    budget = max(3000, min(int(a.get("max_chars") or 14000), MAX_RESULT - 3000))
+    files: list[tuple[Path, int, float]] = []
+    tree: list[str] = []
+    for dirpath, dirs, names in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not d.startswith(".") and not _sensitive(Path(dirpath) / d))
+        rel = Path(dirpath).relative_to(root)
+        depth = len(rel.parts)
+        if depth <= 3 and len(tree) < 150 and rel.parts:
+            tree.append("  " * (depth - 1) + rel.parts[-1] + "/")
+        for n in sorted(names):
+            f = Path(dirpath) / n
+            if _sensitive(f):
+                continue
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            files.append((f, st.st_size, st.st_mtime))
+            if depth <= 3 and len(tree) < 150:
+                tree.append("  " * depth + n)
+        if len(files) > 20000:
+            break
+    by_ext: dict[str, list[int]] = {}
+    for f, size, _ in files:
+        e = by_ext.setdefault(f.suffix.lower() or "(none)", [0, 0])
+        e[0] += 1
+        e[1] += size
+    summary = ", ".join(f"{e} x{c} ({_fmt_size(sz)})" for e, (c, sz) in sorted(by_ext.items(), key=lambda kv: -kv[1][0])[:12])
+    out = [f"# {root}", f"{len(files)} files, {_fmt_size(sum(s for _, s, _ in files))} in total", f"Types: {summary or 'none'}",
+           "", "## Tree" + (" (first 150 entries)" if len(tree) >= 150 else ""), "\n".join(tree) or "(empty)"]
+    used = sum(len(x) for x in out)
+
+    def add(f: Path, lines: int):
+        nonlocal used
+        if used >= budget or f.suffix.lower() not in TEXT_EXT and f.name.lower() not in KEY_FILES and not f.name.lower().startswith("readme"):
+            return
+        try:
+            if f.stat().st_size > 400_000:
+                return
+            raw = f.read_bytes()
+        except OSError:
+            return
+        if b"\x00" in raw[:4096]:
+            return
+        text = "\n".join(raw.decode("utf-8", "replace").splitlines()[:lines])[: max(0, min(2500, budget - used))]
+        if text.strip():
+            out.append(f"\n## {f.relative_to(root)}\n{text}")
+            used += len(text) + 20
+
+    key = [f for f, _, _ in files if f.name.lower() in KEY_FILES or f.name.lower().startswith("readme")]
+    key.sort(key=lambda f: (len(f.relative_to(root).parts), f.name))
+    for f in key[:8]:
+        add(f, 80)
+    rest = sorted((x for x in files if x[0] not in key and x[0].suffix.lower() in TEXT_EXT), key=lambda x: -x[2])
+    for f, _, _ in rest[:10]:
+        add(f, 25)
+    return "\n".join(out)
 
 
 @tool("file_info", "Files", "read", "Size, type and dates of a file or folder.", {"path": S}, ["path"])

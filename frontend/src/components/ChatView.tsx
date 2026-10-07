@@ -37,7 +37,7 @@ const TOOLS_HINT = "You can use tools, but only some are active for each message
   "Use tools when they help, and never claim you did something you did not do with a tool. " +
   "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
   "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets. " +
-  "To find something on the user's computer use search_computer, then read_file; to analyze a folder start with folder_tree (not folder by folder). Folders outside the project ask the user for approval automatically. " +
+  "To find something on the user's computer use search_computer, then read_file; to find a folder or file by name use search_computer (it finds folders too); to understand a folder call analyze_folder ONCE (never walk it folder by folder). Folders outside the project ask the user for approval automatically. " +
   "Do not repeat a call you already made. Stop calling tools as soon as you have enough to answer.";
 
 const allowedBySafety = (t: ToolInfo, safety: Safety) =>

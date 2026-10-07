@@ -190,3 +190,31 @@ def test_listing_has_schema_for_every_tool():
         json.dumps(it["schema"])
     assert {"use_tools", "ask_user", "update_plan"} <= {i["name"] for i in items if i["client"]}
     assert {i["kind"] for i in items} <= {"read", "net", "memory", "write", "exec", "ui"}
+
+
+def test_analyze_folder_gives_overview_in_one_call(tmp_path, d):
+    proj = tmp_path / "nmr"
+    (proj / "src").mkdir(parents=True)
+    (proj / "README.md").write_text("# NMR tools\nProcess spectra.\n")
+    (proj / "src" / "main.py").write_text("print('spectrum')\n")
+    (proj / "src" / "util.py").write_text("def f():\n    return 1\n")
+    (proj / "data.bin").write_bytes(b"\x00\x01\x02" * 10)
+    (proj / ".git").mkdir()
+    (proj / ".git" / "config").write_text("skip")
+    r = run("analyze_folder", {"path": "nmr"}, d)
+    assert r["ok"]
+    t = r["result"]
+    assert "4 files" in t or "3 files" in t
+    assert ".py x2" in t and "README.md" in t and "Process spectra" in t and "print('spectrum')" in t
+    assert "src/" in t and "skip" not in t and "\x00" not in t
+    assert not run("analyze_folder", {"path": "nmr/README.md"}, d)["ok"]
+
+
+def test_search_computer_finds_folders_by_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(tools, "search_roots", lambda all_drives: [tmp_path])
+    (tmp_path / "Documents" / "NMR").mkdir(parents=True)
+    (tmp_path / "Documents" / "nmr_notes.txt").write_text("x")
+    r = tools.run("search_computer", {"query": "nmr"}, [str(tmp_path)], computer=True)["result"]
+    lines = r.splitlines()
+    assert lines[0].startswith(str(tmp_path / "Documents" / "NMR") + "/") and "(folder" in lines[0]
+    assert "nmr_notes.txt" in r
