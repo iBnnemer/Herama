@@ -10,6 +10,8 @@ import ApprovalCard from "./ApprovalCard";
 import type { Choice } from "./ApprovalCard";
 import { approvals } from "../approvals";
 import InputArea from "./InputArea";
+import { LONG_COMMAND, parsePlan, planMarkdown, planPrompt, stepPrompt, stepResult } from "../longTask";
+import type { Step } from "../longTask";
 
 interface Props {
   conv: Conversation;
@@ -30,6 +32,8 @@ interface Props {
   onTps: (t: number) => void;
   taskApi: TaskApi;
 }
+
+interface Outcome { stopped: boolean; failed: boolean; answer: string }
 
 interface Queued { text: string; atts: Attachment[]; truncateAt?: string }   // truncateAt: id of an edited message; everything from it on is replaced
 
@@ -106,6 +110,10 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const convRef = useRef(conv);
+  convRef.current = conv;
+  const longStop = useRef(false);
+  const longRef = useRef(false);   // a long task is running: queued messages wait
   // Access the user approved during this conversation: extra read-only folders, extra writable folders, whole-computer search.
   const [pending, setPending] = useState<{ title: string; detail?: string; resolve: (c: Choice) => void } | null>(null);
   const pendingRef = useRef<typeof pending>(null);
@@ -144,9 +152,10 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
   const model = agent?.model || state.activeModel;
   const ready = state.connected && !!model;
 
-  const sendNow = useCallback(async ({ text, atts, truncateAt }: Queued) => {
+  const sendNow = useCallback(async ({ text, atts, truncateAt }: Queued): Promise<Outcome> => {
+    const cv = convRef.current;
     const ep = EFFORT_PARAMS[state.effort];
-    const cid = conv.id;
+    const cid = cv.id;
     const imgs = atts.filter(a => a.kind === "image" && a.dataUrl);
     const files = atts.filter(a => a.kind === "file");
     const fileBlocks = files.map(f => `\n\n[file: ${f.name}]\n\`\`\`\n${f.text}\n\`\`\``).join("");
@@ -160,13 +169,13 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
     };
     const asstId = rid();
     const asstTs = Date.now();
-    const cut = truncateAt ? conv.messages.findIndex(m => m.id === truncateAt) : -1;
-    const prior = cut >= 0 ? conv.messages.slice(0, cut) : conv.messages;
-    const priorSummary = cut >= 0 ? undefined : conv.summary;
-    if (cut >= 0 && conv.summary) onConvUpdate(cid, { summary: undefined });
+    const cut = truncateAt ? cv.messages.findIndex(m => m.id === truncateAt) : -1;
+    const prior = cut >= 0 ? cv.messages.slice(0, cut) : cv.messages;
+    const priorSummary = cut >= 0 ? undefined : cv.summary;
+    if (cut >= 0 && cv.summary) onConvUpdate(cid, { summary: undefined });
     const base = [...prior, userMsg];
     const label = text || atts[0]?.name || "attachment";
-    const title = conv.messages.length === 0 ? label.slice(0, 40) + (label.length > 40 ? "…" : "") : conv.title;
+    const title = cv.messages.length === 0 ? label.slice(0, 40) + (label.length > 40 ? "…" : "") : cv.title;
 
     const show = (body: string, live: boolean) =>
       onConvUpdate(cid, {
@@ -215,13 +224,14 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
     setStreaming(true);
     const taskId = taskApi.start(`chat: ${label.slice(0, 40)}`);
     let failed = false;
+    let outcome: Outcome = { stopped: false, failed: false, answer: "" };
     let tokens = 0;
     let tFirst = 0;
 
     const all = await loadTools();
     // Tool groups switch on from keywords in the message (and the groups the previous turn used), so the model never sees every tool at once.
-    const lastUser = conv.messages.map(m => m.role).lastIndexOf("user");
-    const inherited = conv.messages.slice(Math.max(0, lastUser)).filter(m => m.role === "tool")
+    const lastUser = cv.messages.map(m => m.role).lastIndexOf("user");
+    const inherited = cv.messages.slice(Math.max(0, lastUser)).filter(m => m.role === "tool")
       .map(m => all.find(t => t.name === (m.toolLabel ?? "").split(/\s/)[0])?.group).filter((g): g is string => !!g);
     const active = new Set<string>([...matchGroups(text), ...inherited, ...(group ? ["Agents"] : [])]);
     const mentioned = extractPaths(text);   // paths the user wrote are theirs to share: read access without asking
@@ -350,7 +360,9 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
       taskApi.finish(taskId, failed ? "error" : "done");
       render();
       setStreaming(false);
+      outcome = { stopped, failed, answer: [...turn].reverse().find(t => t.role === "assistant")?.content ?? "" };
     }
+    return outcome;
   }, [model, state.effort, state.safety, state.contextLength, state.tune, conv, agent, project, onConvUpdate, onTps, taskApi]);
 
   const [draft, setDraft] = useState<{ text: string; n: number }>();
@@ -361,13 +373,76 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
     onReact: (id: string, emoji: string | undefined) => !streaming && onConvUpdate(conv.id, { messages: conv.messages.map(m => m.id === id ? { ...m, reaction: emoji } : m) }),
   };
 
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  const addMessages = (msgs: Message[]) => {
+    const next = [...convRef.current.messages, ...msgs];
+    convRef.current = { ...convRef.current, messages: next };
+    onConvUpdate(convRef.current.id, { messages: next, title: convRef.current.messages.length === msgs.length ? msgs[0].content.slice(0, 40) : convRef.current.title });
+  };
+  const say = (content: string, role: "user" | "assistant" = "assistant") => addMessages([{ id: rid(), role, content, ts: Date.now() }]);
+
+  /** /long <goal>: plan, then do the steps one by one, checking and saving progress after each. */
+  const runLong = async (goal: string) => {
+    if (state.safety === "plan" || state.safety === "off") {
+      say(`/long ${goal}`, "user");
+      say("Long tasks need tools that change files and run commands. Switch the safety mode (next to the message box) to Ask or Auto, then send it again.");
+      return;
+    }
+    longRef.current = true;
+    longStop.current = false;
+    const dirs = projectFolders(project);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setStreaming(true);
+    say(`/long ${goal}`, "user");
+    try {
+      let answer = "";
+      for await (const piece of streamChat({
+        model, numCtx: state.contextLength, temperature: 0.3, top_p: 0.9, tools: [], signal: ctrl.signal,
+        messages: [{ role: "system", content: "You plan software work in small verifiable steps." }, { role: "user", content: planPrompt(goal) }],
+      })) answer += piece;
+      const steps: Step[] = parsePlan(answer);
+      if (steps.length === 0) { say("I could not split that goal into steps. Describe it with a bit more detail and try again."); return; }
+      const save = async () => { await runTool("write_file", { path: "PLAN.md", content: planMarkdown(goal, steps) }, dirs); };
+      const show = (doing = -1) => updatePlan(steps.map((s, i) => ({ text: s.title, status: s.done ? "done" : i === doing ? "doing" : "pending" })));
+      await save();
+      show(0);
+      say(`Plan saved in PLAN.md (${steps.length} steps):\n\n${steps.map((s, i) => `${i + 1}. ${s.title}`).join("\n")}`);
+      setStreaming(false);
+      await sleep(150);
+      for (let i = 0; i < steps.length; i++) {
+        if (longStop.current) { say(`Stopped before step ${i + 1} of ${steps.length}. Progress is saved in PLAN.md.`); return; }
+        show(i);
+        const o = await sendNow({ text: stepPrompt(goal, steps, i), atts: [] });
+        await sleep(150);
+        if (o.stopped) { say(`Stopped at step ${i + 1} of ${steps.length}. Progress is saved in PLAN.md.`); return; }
+        const res = o.failed ? "blocked" : stepResult(o.answer);
+        if (res === "blocked") { show(); say(`Step ${i + 1} (${steps[i].title}) is blocked. See the answer above, then send /long again or continue by hand. Progress is saved in PLAN.md.`); return; }
+        steps[i].done = true;
+        await save();
+        await runTool("git_commit", { message: `Step ${i + 1}: ${steps[i].title}`.slice(0, 120) }, dirs);   // quietly skipped when the folder is not a git project
+      }
+      show();
+      say(`Long task finished: ${steps.length} of ${steps.length} steps done. The plan with all steps is in PLAN.md.`);
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) say(`[error] ${String(err)}`);
+      else say("Stopped. Nothing was lost; the plan is in PLAN.md if it was already written.");
+    } finally {
+      longRef.current = false;
+      abortRef.current = null;
+      setStreaming(false);
+    }
+  };
+
   const submit = (text: string, atts: Attachment[]) => {
-    if (streaming) setQueue(q => [...q, { text, atts }]);
+    const long = LONG_COMMAND.exec(text.trim());
+    if (long && !streaming) { void runLong(long[1].trim()); return; }
+    if (streaming || longRef.current) setQueue(q => [...q, { text, atts }]);
     else void sendNow({ text, atts });
   };
 
   useEffect(() => {
-    if (streaming || queue.length === 0 || !ready) return;
+    if (streaming || longRef.current || queue.length === 0 || !ready) return;
     const [next, ...rest] = queue;
     setQueue(rest);
     void sendNow(next);
@@ -375,6 +450,7 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
 
   const stop = () => {
     pendingRef.current?.resolve("cancel");
+    longStop.current = true;
     setQueue([]);
     abortRef.current?.abort();
   };
