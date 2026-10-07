@@ -109,7 +109,14 @@ export default function InputArea(p: Props) {
       )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 6 }}>
-        <span style={{ marginRight: "auto", padding: "0 4px", display: "flex" }}><StateDot s={p.modelState} /></span>
+        <span style={{ marginRight: "auto", padding: "0 4px", display: "flex", alignItems: "center", gap: 8 }}>
+          <StateDot s={p.modelState} />
+          {(() => {
+            const live = p.modelState?.state === "generating";
+            const v = live && p.modelState?.tps ? p.modelState.tps : p.tps;
+            return v > 0 ? <span style={{ fontSize: 12, color: live ? "var(--text)" : "var(--text-dim)" }}>{v.toFixed(1)} tok/s</span> : null;
+          })()}
+        </span>
         <ModelPicker models={p.models} active={p.activeModel} contextLength={p.contextLength} onPick={p.onModelChange} onManage={p.onManageModels} />
         <button onClick={() => setShowSettings(true)}
           title={`context and generation settings (ctx ${p.contextLength >= 1024 ? `${Math.round(p.contextLength / 1024)}K` : p.contextLength})`}

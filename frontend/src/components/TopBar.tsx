@@ -49,7 +49,6 @@ export default function TopBar(p: Props) {
         <Icon name={p.theme === "dark" ? "sun" : "moon"} />
       </button>
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>
-        {p.tps > 0 && <span>{p.tps.toFixed(1)} t/s</span>}
         <span style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: p.connected ? "var(--green)" : "var(--border2)" }} />
       </div>
     </div>
