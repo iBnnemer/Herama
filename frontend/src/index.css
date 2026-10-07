@@ -1,0 +1,41 @@
+:root {
+  --bg:        #0a0a0a;
+  --surface:   #111111;
+  --surface2:  #1a1a1a;
+  --border:    #2a2a2a;
+  --border2:   #333333;
+  --text:      #e5e5e5;
+  --text-dim:  #666666;
+  --text-mid:  #999999;
+  --accent:    #f97316;
+  --mono:      "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+  --sz:        13px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  width: 100%; height: 100%; overflow: hidden;
+  background: var(--bg); color: var(--text);
+  font-family: var(--mono); font-size: var(--sz);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: var(--mono); font-size: var(--sz);
+  background: none; border: none; cursor: pointer; color: var(--text);
+}
+button:disabled { opacity: 0.4; cursor: default; }
+
+input, textarea {
+  font-family: var(--mono); font-size: var(--sz);
+  background: none; border: none; outline: none;
+  color: var(--text); resize: none;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+.blink { animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
