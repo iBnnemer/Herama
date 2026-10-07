@@ -93,7 +93,14 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
     kv = _kv_gb(m, ctx, layers, model.name)
     vram_budget = max(hw["vram_total_gb"] - RESERVE_GB, 0.0)
     ram_budget = max(hw["ram_total_gb"] * 0.9 - 2.0, 0.0)
-    ratio = (hub.moe_active_ratio(model.name) or 0.2) if moe else 1.0
+    used = int(m.get("expert_used_count") or 0)
+    named = hub.moe_active_ratio(model.name)
+    if not moe:
+        ratio = 1.0
+    elif named and named != 0.2:  # explicit "A3B" or "8x7B" in the name
+        ratio = named
+    else:  # shared layers plus the experts routed per token, from the GGUF header
+        ratio = min(1.0, 0.07 + 0.93 * used / experts) if used else 0.2
     ef = EXPERT_SHARE if moe else 0.0
     expert_layer = size * ef / layers
 

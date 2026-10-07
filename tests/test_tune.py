@@ -23,7 +23,9 @@ HW = {"gpu": "RTX 3080 Ti", "vram_total_gb": 12.0, "vram_free_gb": 12.0, "gpu_ba
 def _model(tmp_path, monkeypatch, size_gb, meta, name="m-Q4_K_M.gguf"):
     f = tmp_path / name
     f.write_bytes(b"\0")
-    monkeypatch.setattr(type(f), "stat", lambda self, **k: types.SimpleNamespace(st_size=int(size_gb * GB)))
+    orig = type(f).stat
+    monkeypatch.setattr(type(f), "stat", lambda self, **k: types.SimpleNamespace(st_size=int(size_gb * GB))
+                        if self == f else orig(self, **k))
     monkeypatch.setattr(resources, "gguf_meta", lambda p: meta)
     monkeypatch.setattr(hub, "hardware", lambda: HW)
     return f

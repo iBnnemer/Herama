@@ -118,3 +118,9 @@ def test_gpu_layers_plan(tmp_path, monkeypatch):
     assert 0 < Engine._gpu_layers(f, 4096) < 48
     monkeypatch.setattr(runtime, "current_backend", lambda: "cpu")
     assert Engine._gpu_layers(f, 4096) == 0
+
+
+def test_arch_marks_unnamed_moe(monkeypatch):
+    assert hub.moe_active_ratio("Qwen3.8-27B-abliterated") is None
+    assert hub.moe_active_ratio("Qwen3.8-27B-abliterated", "qwen35moe") == 0.2
+    assert hub.moe_active_ratio("gemma-12b", "gemma4") is None

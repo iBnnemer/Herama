@@ -77,7 +77,19 @@ _MOE_ACTIVE = re.compile(r"(\d+(?:\.\d+)?)b[-_ ]a(\d+(?:\.\d+)?)b", re.I)   # Qw
 _MOE_EXPERTS = re.compile(r"(\d+)x(\d+(?:\.\d+)?)b", re.I)                    # Mixtral 8x7B
 
 
-def moe_active_ratio(text: str) -> float | None:
+_MOE_ARCH = re.compile(r"moe|mixtral|deepseek2|dbrx|grok|llama4|arctic|jamba|bailing|glm4moe|hunyuan", re.I)
+
+
+def repo_arch(repo: str) -> str:
+    """GGUF architecture reported by the Hub (e.g. qwen3moe), or "" when unavailable."""
+    try:
+        info = _get_json(f"{HF}/api/models/{urllib.parse.quote(repo, safe='/')}?expand[]=gguf")
+        return str((info.get("gguf") or {}).get("architecture") or "")
+    except Exception:
+        return ""
+
+
+def moe_active_ratio(text: str, arch: str = "") -> float | None:
     """Share of the weights read per token for a mixture-of-experts model, or None for a dense one."""
     m = _MOE_ACTIVE.search(text)
     if m:
@@ -86,7 +98,7 @@ def moe_active_ratio(text: str) -> float | None:
     if m:  # top-2 routing: ~2 experts plus shared layers out of ~0.84 of the nominal total
         n, per = int(m.group(1)), float(m.group(2))
         return min(1.0, 2 * per / (n * per * 0.84))
-    return 0.2 if re.search(r"moe", text, re.I) else None
+    return 0.2 if re.search(r"moe", text, re.I) or _MOE_ARCH.search(arch) else None
 
 
 def quant_speed_factor(quant: str) -> float:
@@ -166,6 +178,7 @@ def files(repo: str) -> list[dict]:
     """Single-file GGUF weights of a repo with size, quantisation and speed estimate."""
     tree = _get_json(f"{HF}/api/models/{urllib.parse.quote(repo, safe='/')}/tree/main?recursive=1")
     hw = hardware()
+    arch = repo_arch(repo)
     out = []
     for f in tree:
         path = f.get("path", "")
@@ -176,7 +189,7 @@ def files(repo: str) -> list[dict]:
             continue
         size = (f.get("lfs") or {}).get("size") or f.get("size") or 0
         q = _QUANT.search(base)
-        ratio = moe_active_ratio(f"{repo} {base}")
+        ratio = moe_active_ratio(f"{repo} {base}", arch)
         out.append({"file": path, "size": size, "quant": q.group(1).upper() if q else "",
                     "moe": ratio is not None, "active_ratio": round(ratio or 1.0, 2),
                     **estimate(size, hw, ratio or 1.0, q.group(1) if q else "")})
