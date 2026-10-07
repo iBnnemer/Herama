@@ -37,11 +37,15 @@ def _run(cmd: list[str], timeout: int = 8) -> str:
         return ""
 
 
-def nvidia_cuda_version() -> str | None:
-    """CUDA version supported by the installed NVIDIA driver, or None without an NVIDIA GPU."""
-    exe = shutil.which("nvidia-smi") or next((p for p in (
+def nvidia_smi_path() -> str | None:
+    return shutil.which("nvidia-smi") or next((p for p in (
         r"C:\Windows\System32\nvidia-smi.exe", r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe")
         if os.path.exists(p)), None)
+
+
+def nvidia_cuda_version() -> str | None:
+    """CUDA version supported by the installed NVIDIA driver, or None without an NVIDIA GPU."""
+    exe = nvidia_smi_path()
     if not exe:
         return None
     m = re.search(r"CUDA Version:\s*([\d.]+)", _run([exe], 40))

@@ -104,3 +104,25 @@ export async function* streamChat(opts: {
     }
   }
 }
+
+export interface HubHardware { gpu: string; vram_total_gb: number; vram_free_gb: number; ram_total_gb: number; ram_free_gb: number }
+export interface HubRepo { id: string; downloads: number; likes: number }
+export interface HubFile { file: string; size: number; quant: string; fit: "gpu" | "split" | "cpu" | "too_big"; tps: number; vram_gb: number; ram_gb: number }
+export interface HubJob { id: string; repo: string; file: string; name: string; state: string; done: number; total: number; speed: number; error: string }
+
+async function hubJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(`${BASE}/api/hub${path}`, init);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.detail ?? `request failed (${r.status})`);
+  }
+  return r.json() as Promise<T>;
+}
+
+export const hubSearch = (q: string) => hubJson<HubRepo[]>(`/search?q=${encodeURIComponent(q)}`);
+export const hubFiles = (repo: string) => hubJson<{ hardware: HubHardware; files: HubFile[] }>(`/files?repo=${encodeURIComponent(repo)}`);
+export const hubHardware = () => hubJson<HubHardware>("/hardware");
+export const hubDownloads = () => hubJson<HubJob[]>("/downloads");
+export const hubDownload = (repo: string, file: string, size: number) =>
+  hubJson<HubJob>("/download", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo, file, size }) });
+export const hubCancel = (id: string) => hubJson<{ ok: boolean }>(`/downloads/${id}`, { method: "DELETE" });
