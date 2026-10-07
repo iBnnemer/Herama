@@ -11,6 +11,8 @@ interface Props {
   onModeChange: (m: Mode) => void;
   view: View;
   onView: (v: View) => void;
+  onOpenSettings: () => void;
+  settingsOpen: boolean;
   conversations: Conversation[];
   activeConvId: string;
   onSelectConv: (id: string) => void;
@@ -187,9 +189,9 @@ export default function Sidebar(p: Props) {
             {p.engine}
           </span>
         )}
-        <button title="Settings" onClick={() => p.onView("settings")} style={{
+        <button title="Settings" onClick={p.onOpenSettings} style={{
           marginLeft: "auto", width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
-          background: p.view === "settings" ? "var(--surface2)" : "transparent", color: p.view === "settings" ? "var(--accent)" : "var(--text-mid)",
+          background: p.settingsOpen ? "var(--surface2)" : "transparent", color: p.settingsOpen ? "var(--accent)" : "var(--text-mid)",
         }}><Icon name="gear" size={24} /></button>
       </div>
 

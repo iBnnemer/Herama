@@ -19,6 +19,7 @@ import MessagingPage from "./components/pages/MessagingPage";
 import ArtifactsPage from "./components/pages/ArtifactsPage";
 import { runJobWithTools } from "./jobRunner";
 import JobsPage from "./components/pages/JobsPage";
+import Icon from "./components/Icons";
 import SettingsPage from "./components/pages/SettingsPage";
 import { DEFAULT_PREFS, applyScale, pruneOld } from "./prefs";
 import type { Prefs } from "./prefs";
@@ -39,7 +40,7 @@ interface Layout { leftOpen: boolean; panels: PanelId[]; dockWidth: number }
 
 const VIEW_TITLES: Record<Exclude<View, "chat">, string> = {
   projects: "Projects", capabilities: "Capabilities", messaging: "Messaging",
-  artifacts: "Artifacts", jobs: "Scheduled jobs", settings: "Settings",
+  artifacts: "Artifacts", jobs: "Scheduled jobs"
 };
 
 const SETTINGS_KEY = "herama.settings";
@@ -161,6 +162,13 @@ export default function App() {
   };
 
   const [settingsTarget, setSettingsTarget] = useState<string | undefined>();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") setSettingsOpen(false); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [settingsOpen]);
   const [creatingProject, setCreatingProject] = useState(false);
 
   const addProject = () => {
@@ -286,14 +294,6 @@ export default function App() {
         return <MessagingPage items={inbox} onDelete={id => setInbox(l => l.filter(i => i.id !== id))} onClear={() => setInbox([])} />;
       case "artifacts":
         return <ArtifactsPage conversations={conversations} />;
-      case "settings":
-        return <SettingsPage state={state} theme={theme} onTheme={setTheme} prefs={prefs} onPrefs={setPrefs} conversations={conversations}
-          onClearSessions={() => { const c = newConv(); setConversations([c]); setActiveConvId(c.id); }}
-          projectDir={projectDir} onProjectDir={setProjectDir}
-          onModel={m => setState(s => ({ ...s, activeModel: m }))}
-          onContext={n => setState(s => { const tune = { ...s.tune }; delete tune[s.activeModel]; return { ...s, contextLength: n, tune }; })}
-          onEffort={e => setState(s => ({ ...s, effort: e }))} onSafety={v => setState(s => ({ ...s, safety: v }))}
-          target={settingsTarget} />;
       case "jobs":
         return <JobsPage jobs={jobs} onChange={setJobs} onRunNow={id => void runJob(id)} />;
       default:
@@ -309,6 +309,8 @@ export default function App() {
           onModeChange={switchMode}
           view={view}
           onView={setView}
+          onOpenSettings={() => setSettingsOpen(o => !o)}
+          settingsOpen={settingsOpen}
           conversations={conversations}
           activeConvId={activeConvId}
           onSelectConv={selectConv}
@@ -367,7 +369,7 @@ export default function App() {
             onSafetyChange={v => setState(s => ({ ...s, safety: v }))}
             projects={projects}
             modelState={modelState}
-            onManageModels={() => { setSettingsTarget(`providers/local@${Date.now()}`); setView("settings"); }}
+            onManageModels={() => { setSettingsTarget(`providers/local@${Date.now()}`); setSettingsOpen(true); }}
             onTps={t => setState(s => ({ ...s, tps: t }))}
             taskApi={taskApi}
           />
@@ -384,6 +386,23 @@ export default function App() {
         projectDir={projectDir}
         onProjectDir={setProjectDir}
       />
+      {settingsOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 60, background: "var(--bg)", display: "flex", flexDirection: "column" }}>
+          <div className="titlebar" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: "1px solid var(--border)" }}>
+            <button onClick={() => setSettingsOpen(false)} title="Close settings (Esc)" style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 8, border: "1px solid var(--border)", color: "var(--text-mid)", fontSize: 13 }}>
+              <Icon name="back" size={14} /> Back to app
+            </button>
+            <span style={{ fontWeight: 600, fontSize: 15 }}>Settings</span>
+          </div>
+          <SettingsPage state={state} theme={theme} onTheme={setTheme} prefs={prefs} onPrefs={setPrefs} conversations={conversations}
+            onClearSessions={() => { const c = newConv(); setConversations([c]); setActiveConvId(c.id); }}
+            projectDir={projectDir} onProjectDir={setProjectDir}
+            onModel={m => setState(s => ({ ...s, activeModel: m }))}
+            onContext={n => setState(s => { const tune = { ...s.tune }; delete tune[s.activeModel]; return { ...s, contextLength: n, tune }; })}
+            onEffort={e => setState(s => ({ ...s, effort: e }))} onSafety={v => setState(s => ({ ...s, safety: v }))}
+            target={settingsTarget} />
+        </div>
+      )}
       {monitorOpen && <MonitorModal onClose={() => setMonitorOpen(false)} />}
     </div>
   );
