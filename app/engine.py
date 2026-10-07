@@ -152,7 +152,7 @@ class Engine:
             return self._llm
         self.unload()
         if use_server:
-            n_ctx = int(num_ctx or 4096)
+            n_ctx = int(num_ctx or 65536)  # default context: 64K
             cpu_moe, kv_type = int(cpu_moe or 0), kv_type or "f16"
             if num_gpu is None and (auto := self._auto_plan(p, n_ctx)):  # no manual layout: choose it automatically
                 n_ctx, num_gpu, cpu_moe, kv_type = auto["ctx"], auto["ngl"], auto["cpu_moe"], auto["kv"]

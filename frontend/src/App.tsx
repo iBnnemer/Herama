@@ -41,7 +41,7 @@ export default function App() {
   const [view, setView] = useState<View>("chat");
   const [state, setState] = useState<AppState>({
     connected: false, engine: "", accelerated: null, runtime: null, tps: 0, models: [], agents: [],
-    activeModel: "", contextLength: 4096, tune: {}, effort: "medium",
+    activeModel: "", contextLength: 65536, tune: {}, effort: "medium",
   });
   const [conversations, setConversations] = usePersistent<Conversation[]>("herama.convs", [newConv()], reviveConvs);
   const [activeConvId, setActiveConvId] = useState<string>(() => conversations[0].id);
