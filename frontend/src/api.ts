@@ -51,7 +51,28 @@ export async function deleteAgent(id: string): Promise<void> {
   await fetch(`${BASE}/api/agents/${id}`, { method: "DELETE" });
 }
 
-export interface ChatMsg { role: "system" | "user" | "assistant"; content: string; images?: string[] }
+export interface ToolCall { id: string; type: "function"; function: { name: string; arguments: string } }
+export interface ChatMsg { role: "system" | "user" | "assistant" | "tool"; content: string; images?: string[]; tool_calls?: ToolCall[]; tool_call_id?: string }
+
+export interface ToolInfo { name: string; group: string; kind: "read" | "net" | "memory" | "write" | "exec" | "ui"; description: string; schema: unknown; client: boolean }
+
+let toolCache: Promise<ToolInfo[]> | null = null;
+/** The built-in agent tools (loaded once). */
+export function loadTools(): Promise<ToolInfo[]> {
+  toolCache ??= fetch(`${BASE}/api/tools`).then(r => (r.ok ? r.json() : [])).catch(() => { toolCache = null; return []; }) as Promise<ToolInfo[]>;
+  return toolCache;
+}
+
+export async function runTool(name: string, args: Record<string, unknown>, dirs: string[]): Promise<{ ok: boolean; result: string }> {
+  try {
+    const r = await fetch(`${BASE}/api/tools/run`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, arguments: args, dirs }),
+    });
+    return r.ok ? await r.json() : { ok: false, result: `tool request failed (${r.status})` };
+  } catch (e) {
+    return { ok: false, result: String(e) };
+  }
+}
 
 export async function fetchSkills(): Promise<{ name: string; desc: string }[]> {
   try {
@@ -74,6 +95,8 @@ export async function* streamChat(opts: {
   temperature: number;
   top_p: number;
   signal?: AbortSignal;
+  tools?: unknown[];
+  onToolCalls?: (calls: ToolCall[]) => void;
 }): AsyncGenerator<string> {
   const r = await fetch(`${BASE}/api/chat`, {
     method: "POST",
@@ -82,6 +105,7 @@ export async function* streamChat(opts: {
     body: JSON.stringify({
       model: opts.model,
       messages: opts.messages,
+      tools: opts.tools ?? [],
       stream: true,
       options: { num_ctx: opts.numCtx, num_gpu: opts.numGpu, num_cpu_moe: opts.cpuMoe, num_expert_used: opts.expertUsed, kv_type: opts.kvType, num_thread: opts.threads, temperature: opts.temperature, top_p: opts.top_p },
     }),
@@ -100,6 +124,7 @@ export async function* streamChat(opts: {
       try {
         const obj = JSON.parse(line);
         if (obj.error) throw new Error(String(obj.error));
+        if (obj.message?.tool_calls?.length) opts.onToolCalls?.(obj.message.tool_calls as ToolCall[]);
         const piece = obj.message?.content;
         if (piece) yield piece as string;
       } catch (e) {

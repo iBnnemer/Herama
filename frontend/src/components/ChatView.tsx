@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Safety, Agent, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
-import { streamChat, approvedTune } from "../api";
-import type { ChatMsg, ModelState } from "../api";
+import { streamChat, approvedTune, loadTools, runTool } from "../api";
+import type { ChatMsg, ModelState, ToolCall, ToolInfo } from "../api";
 import { projectContext, projectFolders, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
@@ -27,6 +27,29 @@ interface Props {
 interface Queued { text: string; atts: Attachment[] }
 
 const HISTORY_LIMIT = 40;
+const MAX_ROUNDS = 10;
+const TOOLS_HINT = "You have tools for files, the web, shell commands, skills, memory and small utilities. Use them when they help, and never claim you did something you did not do with a tool. " +
+  "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
+  "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets.";
+
+const allowedBySafety = (t: ToolInfo, safety: Safety) =>
+  safety === "off" ? false : safety === "plan" ? ["read", "net", "memory", "ui"].includes(t.kind) : true;
+
+const toolLabel = (name: string, args: Record<string, unknown>) => {
+  const first = Object.values(args).find(v => typeof v === "string") as string | undefined;
+  return first ? `${name}  ${first.replace(/\s+/g, " ").slice(0, 70)}` : name;
+};
+
+/** update_plan: replace the Plan panel's steps (the panel listens for this event). */
+function updatePlan(steps: unknown): { ok: boolean; result: string } {
+  if (!Array.isArray(steps)) return { ok: false, result: "steps must be a list" };
+  const items = steps.map((s: { text?: string; status?: string }, i) => ({
+    id: `${Date.now()}-${i}`, text: String(s.text ?? ""), done: s.status === "done", doing: s.status === "doing",
+  })).filter(i => i.text);
+  try { localStorage.setItem("herama.plan", JSON.stringify(items)); } catch { /* storage unavailable */ }
+  window.dispatchEvent(new Event("herama:plan"));
+  return { ok: true, result: `Plan updated (${items.length} steps).` };
+}
 const b64 = (dataUrl: string) => dataUrl.slice(dataUrl.indexOf(",") + 1);
 
 /** Drop the oldest messages until the conversation fits ~75% of the context (rough 2.5 chars per token). */
@@ -44,7 +67,7 @@ function fitToContext(msgs: Message[], ctx: number, reserved = 0): Message[] {
   return kept;
 }
 
-const PLAN_HINT = "Plan mode: when a request needs actions on the user's machine, describe a short numbered plan and do not claim to have run anything.";
+const PLAN_HINT = "Plan mode: you may only read, search and look things up. For anything that changes files or runs commands, describe a short numbered plan and do not claim to have changed anything.";
 
 export default function ChatView({ conv, agent, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onManageModels, modelState, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
@@ -96,39 +119,96 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-    show("", true);
+    const turn: Message[] = [{ id: asstId, role: "assistant", content: "", ts: asstTs, streaming: true }];
+    const render = () => onConvUpdate(cid, { title, messages: [...base, ...turn] });
+    const patchLast = (patch: Partial<Message>) => { turn[turn.length - 1] = { ...turn[turn.length - 1], ...patch }; render(); };
+    const patchAt = (i: number, patch: Partial<Message>) => { turn[i] = { ...turn[i], ...patch }; render(); };
+    render();
     setStreaming(true);
     const taskId = taskApi.start(`chat: ${label.slice(0, 40)}`);
     let failed = false;
-    let full = "";
     let tokens = 0;
     let tFirst = 0;
 
+    const all = await loadTools();
+    const offered = all.filter(t => allowedBySafety(t, state.safety));
+    const tools = offered.map(t => t.schema);
+    if (offered.length) {
+      if (messages[0]?.role === "system") messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${TOOLS_HINT}` };
+      else messages.unshift({ role: "system", content: TOOLS_HINT });
+    }
+
     try {
-      for await (const piece of streamChat({
-        model, messages, numCtx: state.contextLength, ...approvedTune(state, model), temperature: ep.temperature, top_p: ep.top_p, signal: ctrl.signal,
-      })) {
-        full += piece;
-        if (!tFirst) tFirst = performance.now();
-        else {
-          tokens++;
-          const elapsed = (performance.now() - tFirst) / 1000;
-          if (elapsed > 0.5) onTps(tokens / elapsed);
+      for (let round = 0; round < MAX_ROUNDS; round++) {
+        let text = "";
+        let calls: ToolCall[] = [];
+        for await (const piece of streamChat({
+          model, messages, numCtx: state.contextLength, ...approvedTune(state, model), temperature: ep.temperature, top_p: ep.top_p,
+          signal: ctrl.signal, tools, onToolCalls: c => { calls = c; },
+        })) {
+          text += piece;
+          if (!tFirst) tFirst = performance.now();
+          else {
+            tokens++;
+            const elapsed = (performance.now() - tFirst) / 1000;
+            if (elapsed > 0.5) onTps(tokens / elapsed);
+          }
+          patchLast({ content: text, streaming: true });
         }
-        show(full, true);
+        if (calls.length === 0) break;
+
+        patchLast({ content: text, streaming: false });
+        messages.push({ role: "assistant", content: text, tool_calls: calls });
+        let question = "";
+        for (const call of calls) {
+          if (ctrl.signal.aborted) throw new DOMException("stopped", "AbortError");
+          const name = call.function.name;
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>; } catch { /* bad JSON is reported to the model below */ }
+          const info = all.find(t => t.name === name);
+          turn.push({ id: rid(), role: "tool", content: "", ts: Date.now(), toolLabel: toolLabel(name, args), toolStatus: "running" });
+          render();
+          const row = turn.length - 1;
+          let result: { ok: boolean; result: string };
+          if (!info) result = { ok: false, result: `unknown tool: ${name}` };
+          else if (state.safety === "ask" && (info.kind === "write" || info.kind === "exec")
+            && !window.confirm(`Allow the agent to run this?\n\n${toolLabel(name, args)}\n\n${JSON.stringify(args, null, 2).slice(0, 800)}`)) {
+            result = { ok: false, result: "The user declined this action." };
+          } else if (name === "ask_user") {
+            question = String(args.question ?? "");
+            result = { ok: true, result: "Question shown to the user." };
+          } else if (name === "update_plan") {
+            result = updatePlan(args.steps);
+          } else {
+            result = await runTool(name, args, dirs);
+          }
+          patchAt(row, { toolStatus: result.ok ? "done" : "error", content: result.result });
+          messages.push({ role: "tool", tool_call_id: call.id, content: result.result });
+        }
+        if (question) { turn.push({ id: rid(), role: "assistant", content: question, ts: Date.now() }); render(); break; }
+        turn.push({ id: rid(), role: "assistant", content: "", ts: Date.now(), streaming: true });
+        render();
+        if (round === MAX_ROUNDS - 1) patchLast({ content: "[stopped: too many tool steps in one turn]", streaming: false });
       }
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
         failed = true;
-        full += `${full ? "\n" : ""}[error] ${String(err)}`;
+        patchLast({ content: `${turn[turn.length - 1].content}${turn[turn.length - 1].content ? "\n" : ""}[error] ${String(err)}` });
       }
     } finally {
       const stopped = ctrl.signal.aborted;
-      if (!full && !stopped) { failed = true; full = "[error] the model returned an empty response"; }
-      if (!full && stopped) full = "[stopped]";
+      const last = turn[turn.length - 1];
+      if (last.role === "assistant" && !last.content) {
+        if (turn.length > 1 && !stopped) turn.pop();  // nothing more to say after the tool results
+        else if (stopped) patchLast({ content: "[stopped]" });
+        else { failed = true; patchLast({ content: "[error] the model returned an empty response" }); }
+      }
+      for (let i = 0; i < turn.length; i++) {
+        if (turn[i].streaming || turn[i].toolStatus === "running") turn[i] = { ...turn[i], streaming: false, toolStatus: turn[i].toolStatus === "running" ? "error" : turn[i].toolStatus };
+      }
       abortRef.current = null;
       taskApi.finish(taskId, failed ? "error" : "done");
-      show(full, false);
+      render();
       setStreaming(false);
     }
   }, [model, state.effort, state.safety, state.contextLength, state.tune, conv, agent, project, onConvUpdate, onTps, taskApi]);

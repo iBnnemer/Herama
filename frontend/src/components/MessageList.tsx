@@ -27,7 +27,16 @@ export default function MessageList({ messages }: { messages: Message[] }) {
 
 function MsgRow({ m }: { m: Message }) {
   if (m.role === "tool") {
-    return <div style={{ margin: "6px 0", fontSize: 12, color: "var(--text-dim)", fontFamily: "var(--mono)" }}>{m.toolLabel ?? m.content}</div>;
+    const mark = m.toolStatus === "running" ? "…" : m.toolStatus === "error" ? "✗" : "✓";
+    const color = m.toolStatus === "error" ? "var(--red)" : "var(--text-dim)";
+    return (
+      <details style={{ margin: "6px 0", fontSize: 12, color: "var(--text-dim)", fontFamily: "var(--mono)" }}>
+        <summary style={{ cursor: m.content ? "pointer" : "default", userSelect: "none" }}>
+          <span style={{ color, marginInlineEnd: 6 }}>{mark}</span>{m.toolLabel ?? "tool"}
+        </summary>
+        {m.content && <pre style={{ margin: "6px 0 0", padding: "8px 10px", background: "var(--bg2)", borderRadius: 8, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 240, overflow: "auto", color: "var(--text-mid)" }}>{m.content.slice(0, 4000)}</pre>}
+      </details>
+    );
   }
 
   const isUser = m.role === "user";

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-interface Item { id: string; text: string; done: boolean }
+interface Item { id: string; text: string; done: boolean; doing?: boolean }
 
 const KEY = "herama.plan";
 
@@ -11,6 +11,12 @@ function load(): Item[] {
 export default function PlanPanel() {
   const [items, setItems] = useState<Item[]>(load);
   const [text, setText] = useState("");
+
+  useEffect(() => {
+    const reload = () => setItems(load());
+    window.addEventListener("herama:plan", reload);
+    return () => window.removeEventListener("herama:plan", reload);
+  }, []);
 
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(items)); } catch { /* storage unavailable */ }
@@ -33,7 +39,7 @@ export default function PlanPanel() {
           <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 4px", fontSize: 13 }}>
             <input type="checkbox" checked={i.done} style={{ accentColor: "var(--accent)" }}
               onChange={() => setItems(p => p.map(x => x.id === i.id ? { ...x, done: !x.done } : x))} />
-            <span style={{ flex: 1, textDecoration: i.done ? "line-through" : "none", color: i.done ? "var(--text-dim)" : "var(--text)" }}>{i.text}</span>
+            <span style={{ flex: 1, textDecoration: i.done ? "line-through" : "none", color: i.done ? "var(--text-dim)" : i.doing ? "var(--accent)" : "var(--text)" }}>{i.text}</span>
             <button onClick={() => setItems(p => p.filter(x => x.id !== i.id))} style={{ color: "var(--text-dim)" }}>×</button>
           </div>
         ))}
