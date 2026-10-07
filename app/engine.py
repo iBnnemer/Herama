@@ -171,7 +171,7 @@ class Engine:
 
     def _kw(self, opts: dict) -> dict:
         return dict(
-            max_tokens=opts.get("num_predict", 512),
+            max_tokens=opts.get("num_predict", -1),
             temperature=opts.get("temperature", 0.8),
             top_p=opts.get("top_p", 0.95),
             top_k=opts.get("top_k", 40),

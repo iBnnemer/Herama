@@ -95,7 +95,7 @@ class ServerLLM:
         body["stream"] = True
         body["stream_options"] = {"include_usage": True}
         resp = self._open(path, body)
-        last, usage = None, None
+        last, usage, thinking = None, None, False
         try:
             for raw in resp:
                 line = raw.decode("utf-8", "replace").strip()
@@ -113,6 +113,14 @@ class ServerLLM:
                 if obj.get("usage"):
                     usage = obj["usage"]
                 if obj.get("choices"):
+                    delta = obj["choices"][0].get("delta") or {}
+                    think = delta.pop("reasoning_content", None)
+                    if think:  # keep the model's reasoning visible instead of dropping it
+                        delta["content"] = ("" if thinking else "<think>") + think
+                        thinking = True
+                    elif thinking and delta.get("content"):
+                        delta["content"] = "</think>\n" + delta["content"]
+                        thinking = False
                     last = obj
                     yield obj
             if last is not None and usage:
