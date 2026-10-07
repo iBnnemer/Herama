@@ -30,7 +30,7 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("chat");
   const [state, setState] = useState<AppState>({
     connected: false, tps: 0, models: [], agents: [],
-    activeModel: "", contextLength: 4096, effort: "balanced",
+    activeModel: "", contextLength: 4096, effort: "medium",
   });
   const [conversations, setConversations] = useState<Conversation[]>([newConv()]);
   const [activeConvId, setActiveConvId] = useState<string>(conversations[0].id);

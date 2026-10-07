@@ -4,6 +4,8 @@ import { EFFORT_PARAMS, PANELS } from "../types";
 import { streamGenerate } from "../api";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
+import Icon from "./Icons";
+import type { IconName } from "./Icons";
 
 interface Props {
   conv: Conversation;
@@ -21,7 +23,7 @@ interface Props {
   taskApi: TaskApi;
 }
 
-const tbtn: React.CSSProperties = { padding: "3px 9px", borderRadius: 6, fontSize: 12, color: "var(--text-mid)", border: "1px solid var(--border)" };
+const tbtn: React.CSSProperties = { padding: 6, borderRadius: 7, color: "var(--text-mid)", border: "1px solid transparent", display: "flex" };
 
 let _id = 0;
 const uid = () => String(++_id);
@@ -93,7 +95,7 @@ export default function ChatView({ conv, state, onConvUpdate, onModelChange, onC
         borderBottom: "1px solid var(--border)", flexShrink: 0, gap: 10,
       }}>
         <button onClick={onToggleLeft} title={leftOpen ? "hide sidebar" : "show sidebar"}
-          style={{ ...tbtn, background: leftOpen ? "var(--surface2)" : "transparent" }}>sidebar</button>
+          style={{ ...tbtn, background: leftOpen ? "var(--surface2)" : "transparent" }}><Icon name="sidebar" /></button>
         <span style={{ fontSize: 13, color: "var(--text-mid)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {conv.title}
         </span>
@@ -101,7 +103,7 @@ export default function ChatView({ conv, state, onConvUpdate, onModelChange, onC
           {PANELS.map(x => (
             <button key={x.id} onClick={() => onTogglePanel(x.id)} title={x.title}
               style={{ ...tbtn, background: openPanels.includes(x.id) ? "var(--surface2)" : "transparent",
-                color: openPanels.includes(x.id) ? "var(--text)" : "var(--text-dim)" }}>{x.id}</button>
+                color: openPanels.includes(x.id) ? "var(--text)" : "var(--text-dim)" }}><Icon name={x.id as IconName} /></button>
           ))}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>

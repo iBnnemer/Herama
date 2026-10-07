@@ -1,6 +1,7 @@
 import { useRef, KeyboardEvent, useState } from "react";
 import type { Effort, Model } from "../types";
-import { EFFORT_PARAMS } from "../types";
+import EffortPicker from "./EffortPicker";
+import Icon from "./Icons";
 import SettingsModal from "./SettingsModal";
 
 interface Props {
@@ -16,8 +17,6 @@ interface Props {
   disabled: boolean;
   placeholder?: string;
 }
-
-const EFFORTS: Effort[] = ["fast", "balanced", "smart"];
 
 export default function InputArea(p: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -74,7 +73,7 @@ export default function InputArea(p: Props) {
             color: p.disabled ? "var(--text-dim)" : "#000",
             fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center",
           }}
-        >↑</button>
+        ><Icon name="send" size={16} /></button>
       </div>
 
       {/* Controls bar below textarea */}
@@ -97,28 +96,13 @@ export default function InputArea(p: Props) {
           {p.models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
         </select>
 
-        {/* Effort pills */}
-        <div style={{ display: "flex", gap: 3, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 3 }}>
-          {EFFORTS.map(e => (
-            <button
-              key={e}
-              onClick={() => p.onEffortChange(e)}
-              style={{
-                padding: "3px 10px", borderRadius: 6, fontSize: 11,
-                background: p.effort === e ? "var(--surface2)" : "transparent",
-                color: p.effort === e ? "var(--text)" : "var(--text-dim)",
-                fontWeight: p.effort === e ? 600 : 400,
-                border: p.effort === e ? "1px solid var(--border2)" : "1px solid transparent",
-              }}
-            >{EFFORT_PARAMS[e].label}</button>
-          ))}
-        </div>
+        <EffortPicker effort={p.effort} onChange={p.onEffortChange} />
 
         {/* Settings */}
         <button
           onClick={() => setShowSettings(true)}
           style={{ padding: "4px 8px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-dim)", fontSize: 12 }}
-        >⚙</button>
+        title="generation settings"><Icon name="gear" size={14} /></button>
 
         {/* Token hint */}
         <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-dim)" }}>
