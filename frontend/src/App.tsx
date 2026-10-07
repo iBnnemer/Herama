@@ -38,13 +38,28 @@ const VIEW_TITLES: Record<Exclude<View, "chat">, string> = {
   artifacts: "Artifacts", jobs: "Scheduled jobs",
 };
 
+const SETTINGS_KEY = "herama.settings";
+type Saved = Pick<AppState, "activeModel" | "contextLength" | "tune" | "effort" | "safety">;
+
+/** Last choices (model, context, effort, safety) from the previous run. */
+function savedSettings(): Partial<Saved> {
+  try {
+    const v = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") as Partial<Saved>;
+    return v && typeof v === "object" ? v : {};
+  } catch { return {}; }
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>("chat");
   const [view, setView] = useState<View>("chat");
   const [state, setState] = useState<AppState>({
     connected: false, engine: "", accelerated: null, runtime: null, tps: 0, models: [], agents: [],
-    activeModel: "", contextLength: 65536, tune: {}, effort: "medium", safety: "plan",
+    activeModel: "", contextLength: 65536, tune: {}, effort: "medium", safety: "plan", ...savedSettings(),
   });
+  useEffect(() => {
+    const { activeModel, contextLength, tune, effort, safety } = state;
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ activeModel, contextLength, tune, effort, safety })); } catch { /* storage unavailable */ }
+  }, [state.activeModel, state.contextLength, state.tune, state.effort, state.safety]); // eslint-disable-line react-hooks/exhaustive-deps
   const [conversations, setConversations] = usePersistent<Conversation[]>("herama.convs", [newConv()], reviveConvs);
   const [activeConvId, setActiveConvId] = useState<string>(() => conversations[0].id);
   const [layout, setLayout] = usePersistent<Layout>("herama.layout", { leftOpen: true, panels: ["tasks", "files"], dockWidth: 380 });
@@ -98,7 +113,7 @@ export default function App() {
     setState(s => {
       const models: Model[] = mr.status === "fulfilled" ? mr.value : s.models;
       const agents: Agent[] = ar.status === "fulfilled" ? ar.value : s.agents;
-      return { ...s, connected, engine, accelerated, runtime: health.runtime ?? null, models, agents, activeModel: models.some(m => m.name === s.activeModel) ? s.activeModel : (models[0]?.name ?? "") };
+      return { ...s, connected, engine, accelerated, runtime: health.runtime ?? null, models, agents, activeModel: models.length === 0 || models.some(m => m.name === s.activeModel) ? s.activeModel : models[0].name };
     });
   }, []);
 
