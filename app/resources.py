@@ -75,10 +75,14 @@ class Plan:
 def plan(model: Path, want_ctx: int | None = None, want_gpu: int | None = None) -> Plan:
     m = gguf_meta(model)
     size = model.stat().st_size
-    layers = int(m.get("block_count", 32))
-    ctx_train = int(m.get("context_length", 4096))
-    emb, heads = int(m.get("embedding_length", 4096)), int(m.get("attention.head_count", 32))
-    kv_heads = int(m.get("attention.head_count_kv", heads))
+    def num(key: str, default: int) -> int:
+        v = m.get(key)  # arrays (per-layer head counts in newer models) are read as None
+        return int(v) if isinstance(v, (int, float)) and v > 0 else default
+
+    layers = num("block_count", 32)
+    ctx_train = num("context_length", 4096)
+    emb, heads = num("embedding_length", 4096), num("attention.head_count", 32)
+    kv_heads = num("attention.head_count_kv", heads)
     ram = int(psutil.virtual_memory().available * config.RAM_HEADROOM)
     vram = int(free_vram() * config.RAM_HEADROOM)
 
