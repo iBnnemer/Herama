@@ -40,12 +40,15 @@ const groupHint = (g: Group | undefined, agents: Agent[]) => {
   return `You lead the group "${g.name}". Your team: ${names || "(no members yet)"}. Split the user's request into sub-tasks, ask the right members with ask_agent (give each all the context it needs), then combine their answers into one reply for the user. Do simple things yourself.`;
 };
 
-const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory, Agents or Utilities), call use_tools to switch it on. " +
+const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory, Agents, Git or Utilities), call use_tools to switch it on. " +
   "Use tools when they help, and never claim you did something you did not do with a tool. " +
   "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
   "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets. " +
   "To find something on the user's computer use search_computer, then read_file; to find a folder or file by name use search_computer (it finds folders too); to understand a folder call analyze_folder ONCE (never walk it folder by folder). Folders outside the project ask the user for approval automatically. " +
   "Do not repeat a call you already made. Stop calling tools as soon as you have enough to answer.";
+
+/** Tools that are confirmed every single time, whatever the safety mode or earlier approvals. */
+const ALWAYS_ASK = new Set(["git_push"]);
 
 const allowedBySafety = (t: ToolInfo, safety: Safety) =>
   safety === "off" ? false : safety === "plan" ? ["read", "net", "memory", "ui"].includes(t.kind) : true;
@@ -80,6 +83,19 @@ function fitToContext(msgs: Message[], ctx: number, reserved = 0): Message[] {
     kept.unshift(m);
   }
   return kept;
+}
+
+/** Ask the model to fold older messages into a short running summary (so long chats keep their thread without filling the context). */
+async function summarize(prev: string | undefined, old: Message[], model: string, numCtx: number): Promise<string> {
+  const lines = old.map(m => `[${m.role}] ${(m.role === "assistant" ? splitThink(m.content).answer : m.content).slice(0, 1200)}`).join("\n");
+  const prompt = `${prev ? `Summary so far:\n${prev}\n\n` : ""}New messages:\n${lines.slice(-14000)}\n\n` +
+    "Write the updated summary in at most 250 words, in the language of the conversation. Keep decisions, facts about the user, names, file paths and open tasks. Plain text only.";
+  let out = "";
+  for await (const piece of streamChat({
+    model, numCtx, temperature: 0.2, top_p: 0.8, tools: [],
+    messages: [{ role: "system", content: "You compress conversations into short, faithful summaries." }, { role: "user", content: prompt }],
+  })) out += piece;
+  return splitThink(out).answer.trim();
 }
 
 const PLAN_HINT = "Plan mode: you may only read, search and look things up. For anything that changes files or runs commands, describe a short numbered plan and do not claim to have changed anything.";
@@ -131,10 +147,26 @@ export default function ChatView({ conv, agent, group, project, projects, state,
     const knowledge = dirs.length && window.herama?.fsKnowledge
       ? await window.herama.fsKnowledge(dirs, Math.max(0, Math.floor(state.contextLength * 0.4 * 2.5) - instrLen)).catch(() => undefined)
       : undefined;
-    const system = [agent?.system_prompt, groupHint(group, state.agents), state.safety === "plan" ? PLAN_HINT : "", projectContext(project, knowledge)].filter(Boolean).join("\n\n");
-    const history: ChatMsg[] = fitToContext(base
-      .filter(m => m.role !== "tool")
-      .slice(-HISTORY_LIMIT), state.contextLength, system.length)
+    const baseSystem = [agent?.system_prompt, groupHint(group, state.agents), state.safety === "plan" ? PLAN_HINT : "", projectContext(project, knowledge)].filter(Boolean).join("\n\n");
+    const convo = base.filter(m => m.role !== "tool");
+    let fitted = fitToContext(convo.slice(-HISTORY_LIMIT), state.contextLength, baseSystem.length);
+    let summary = conv.summary?.text ?? "";
+    if (fitted.length < convo.length) {   // older messages no longer fit: keep their gist in a running summary
+      fitted = fitToContext(convo.slice(-HISTORY_LIMIT), state.contextLength, baseSystem.length + 2500);
+      const dropped = convo.slice(0, convo.length - fitted.length);
+      const from = conv.summary ? dropped.findIndex(m => m.id === conv.summary!.upTo) + 1 : 0;
+      const fresh = dropped.slice(from);
+      if (fresh.length >= 2) {
+        show("", true);
+        setStreaming(true);
+        try {
+          const text2 = await summarize(conv.summary?.text, fresh, model, state.contextLength);
+          if (text2) { summary = text2; onConvUpdate(cid, { summary: { text: text2, upTo: dropped[dropped.length - 1].id } }); }
+        } catch { /* keep the old summary; the oldest messages are simply dropped */ }
+      }
+    } else summary = "";
+    const system = [baseSystem, summary ? `Summary of the earlier part of this conversation:\n${summary}` : ""].filter(Boolean).join("\n\n");
+    const history: ChatMsg[] = fitted
       .map(m => ({ role: m.role as "user" | "assistant", content: m.role === "assistant" ? splitThink(m.content).answer : m.content }));
     if (imgs.length) history[history.length - 1].images = imgs.map(a => b64(a.dataUrl!));
     const messages: ChatMsg[] = system
@@ -231,10 +263,11 @@ export default function ChatView({ conv, agent, group, project, projects, state,
           const sig = `${name}:${call.function.arguments}`;
           const times = (seen.get(sig) ?? 0) + 1;
           seen.set(sig, times);
-          if (info && times === 1 && state.safety === "ask" && (info.kind === "write" || info.kind === "exec") && !approvals.has(`tool:${name}`)) {
-            const c = await ask(`Allow the agent to run ${name}?`, JSON.stringify(args, null, 2).slice(0, 1200));
+          const always = ALWAYS_ASK.has(name);
+          if (info && times === 1 && (always || (state.safety === "ask" && (info.kind === "write" || info.kind === "exec") && !approvals.has(`tool:${name}`)))) {
+            const c = await ask(always ? "Push to the remote repository? (asked every time)" : `Allow the agent to run ${name}?`, JSON.stringify(args, null, 2).slice(0, 1200));
             if (c === "cancel") declined = true;
-            else if (c !== "once") approvals.remember(`tool:${name}`, c);
+            else if (c !== "once" && !always) approvals.remember(`tool:${name}`, c);
           }
           if (times > 1 && info?.kind !== "ui") {
             if (times >= 3) stuck = true;

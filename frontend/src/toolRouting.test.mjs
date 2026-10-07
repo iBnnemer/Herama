@@ -17,6 +17,8 @@ const cases = [
   ["see http://x.org/a", ["Web"]],
   ["\u0627\u0628\u062d\u062b \u0641\u064a \u062c\u0647\u0627\u0632\u064a \u0639\u0646 \u0641\u0627\u062a\u0648\u0631\u0629 \u0627\u0644\u0643\u0647\u0631\u0628\u0627\u0621", ["Files", "Web"]], ["\u0645\u0627 \u0645\u0648\u0627\u0635\u0641\u0627\u062a \u062c\u0647\u0627\u0632\u064a", ["Files", "Utilities"]],
   ["find my tax pdf on my computer", ["Files"]],
+  ["commit my changes and push", ["Git"]],
+  ["start the dev server on port 3000", ["Shell"]],
 ];
 
 for (const [text, want] of cases) {

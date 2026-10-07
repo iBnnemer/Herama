@@ -658,7 +658,8 @@ def _run_command(a, ctx):
     except subprocess.TimeoutExpired:
         raise ToolError("the command timed out") from None
     out = (r.stdout or "") + (f"\n[stderr]\n{r.stderr}" if r.stderr else "")
-    return f"[exit code {r.returncode}]\n{out}".strip()
+    from app.tools_dev import condense
+    return f"[exit code {r.returncode}]\n{condense(out)}".strip()
 
 
 # ── skills ────────────────────────────────────────────────────────────────────
@@ -871,8 +872,8 @@ def _system_info(a, ctx):
 CLIENT_TOOLS = [
     Tool("use_tools", "Utilities", "ui",
          "Switch on more tools when the task needs them. Only a few tools are active at first. Groups: Files (read, write, search files), Web (search, open pages), "
-         "Shell (run commands), Skills (saved programs), Memory (remember facts), Agents (ask other agents for help), Utilities (time, calculator, computer info).",
-         {"groups": _arr({"type": "string", "enum": ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Utilities"]})}, ["groups"], lambda a, c: ""),
+         "Shell (run commands), Skills (saved programs), Memory (remember facts), Git (clone, status, commit, push), Agents (ask other agents for help), Utilities (time, calculator, computer info).",
+         {"groups": _arr({"type": "string", "enum": ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Utilities"]})}, ["groups"], lambda a, c: ""),
     Tool("ask_user", "Utilities", "ui", "Ask the user a question when you need a decision or missing detail, then stop and wait for the answer.",
          {"question": S}, ["question"], lambda a, c: ""),
     Tool("update_plan", "Utilities", "ui",
@@ -882,6 +883,9 @@ CLIENT_TOOLS = [
 ]
 for _t in CLIENT_TOOLS:
     REGISTRY[_t.name] = _t
+
+
+from app import tools_dev  # noqa: E402,F401  (registers the developer tools)
 
 
 def listing() -> list[dict]:

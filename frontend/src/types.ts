@@ -25,6 +25,7 @@ export interface Conversation {
   messages: Message[];
   agentId?: string;   // for a group chat this is the lead
   groupId?: string;
+  summary?: { text: string; upTo: string };   // compressed older messages that no longer fit the context
   projectId?: string;
   pinned?: boolean;
 }

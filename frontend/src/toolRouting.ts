@@ -1,6 +1,6 @@
 /** Decides which tool groups to switch on for a message, so the model never sees all tools at once. */
 
-export const TOOL_GROUPS = ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Utilities"] as const;
+export const TOOL_GROUPS = ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Utilities"] as const;
 export type ToolGroup = (typeof TOOL_GROUPS)[number];
 
 // Patterns run on normalized text: lower case, no Arabic diacritics, alef variants merged, ta marbuta and alef maqsura folded.
@@ -18,13 +18,17 @@ const PATTERNS: Record<ToolGroup, RegExp> = {
     "\u0627\u0628\u062d\u062b|\u0628\u062d\u062b|\u062f\u0648\u0631 \u0639\u0644\u0649|\u0645\u0648\u0642\u0639|\u0631\u0627\u0628\u0637|\u0627\u0646\u062a\u0631\u0646\u062a|\u0627\u062e\u0628\u0627\u0631|\u062d\u0645\u0644|\u0646\u0632\u0644|\u0637\u0642\u0633|\u0627\u062d\u062f\u062b|\u0627\u062e\u0631",
   ].join("|"), "i"),
   Shell: new RegExp([
-    "\\b(run|execute|command|terminal|shell|cmd|powershell|bash|install|pip|npm|git|python|node|build|compile|tests?)\\b",
+    "\\b(run|execute|command|terminal|shell|cmd|powershell|bash|install|pip|npm|python|node|build|compile|tests?|lint\\w*|servers?|ports?|process(es)?|checks?)\\b",
     "\u0634\u063a\u0644|\u0646\u0641\u0630|\u062a\u0646\u0641\u064a\u0630|\u0627\u0645\u0631|\u0627\u0648\u0627\u0645\u0631|\u062b\u0628\u062a|\u062a\u062b\u0628\u064a\u062a|\u062a\u064a\u0631\u0645\u0646\u0627\u0644|\u062a\u0631\u0645\u0646\u0627\u0644|\u0627\u0628\u0646\u064a|\u0627\u062e\u062a\u0628\u0631",
   ].join("|"), "i"),
   Skills: /\bskills?\b|\u0645\u0647\u0627\u0631/i,
   Memory: new RegExp([
     "\\b(remember|forget|recall|memor(y|ies)|don'?t forget|keep in mind)",
     "\u062a\u0630\u0643\u0631|\u062a\u062a\u0630\u0643\u0631|\u0627\u0646\u0633|\u0630\u0627\u0643\u0631\u0647|\u0644\u0627 \u062a\u0646\u0633|\u062e\u0630 \u0628\u0627\u0644\u0643",
+  ].join("|"), "i"),
+  Git: new RegExp([
+    "\\b(git|github|commit|clone|push|pull request|branch|diff)\\b",
+    "\u062c\u064a\u062a|\u0643\u0648\u0645\u064a\u062a|\u0645\u0633\u062a\u0648\u062f\u0639",
   ].join("|"), "i"),
   Agents: new RegExp([
     "\\b(agents?|delegate|collaborat\\w*|teammates?|ask (the|another|other) )",
@@ -49,7 +53,7 @@ export function matchGroups(text: string): ToolGroup[] {
 }
 
 /** Groups that make a step-by-step plan worth keeping. */
-export const PLANNING_GROUPS: ToolGroup[] = ["Files", "Web", "Shell", "Skills"];
+export const PLANNING_GROUPS: ToolGroup[] = ["Files", "Web", "Shell", "Skills", "Git"];
 
 /** Names of the tools to offer: those of the active groups, plus the small always-on ones. */
 export function activeTools<T extends { name: string; group: string; kind: string }>(all: T[], active: Set<string>): T[] {
