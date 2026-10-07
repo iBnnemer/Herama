@@ -89,7 +89,15 @@ def moe_active_ratio(text: str) -> float | None:
     return 0.2 if re.search(r"moe", text, re.I) else None
 
 
-def estimate(size_bytes: int, hw: dict | None = None, active_ratio: float = 1.0) -> dict:
+def quant_speed_factor(quant: str) -> float:
+    """Low-bit and i-quants cost more compute per byte to dequantise, so they run below the bandwidth limit."""
+    q = quant.upper()
+    if q.startswith("IQ"):
+        return 0.75
+    return 0.85 if q.startswith(("Q2", "Q3")) else 1.0
+
+
+def estimate(size_bytes: int, hw: dict | None = None, active_ratio: float = 1.0, quant: str = "") -> dict:
     """Rough decode speed (tokens/s) and memory fit for a model file on this machine.
 
     Memory fit uses the whole file; speed uses only the bytes read per token, which for a
@@ -97,7 +105,7 @@ def estimate(size_bytes: int, hw: dict | None = None, active_ratio: float = 1.0)
     """
     hw = hw or hardware()
     size = max(size_bytes, 1) / 1024 ** 3
-    read = size * active_ratio
+    read = size * active_ratio / quant_speed_factor(quant)  # effective bytes, slower quants count extra
     need = size * 1.1  # weights plus KV cache and buffers
     # totals, not free memory: a model loaded right now can be unloaded, so it must not shrink the budget
     vram = max(hw["vram_total_gb"] - 0.7, 0.0)
@@ -171,7 +179,7 @@ def files(repo: str) -> list[dict]:
         ratio = moe_active_ratio(f"{repo} {base}")
         out.append({"file": path, "size": size, "quant": q.group(1).upper() if q else "",
                     "moe": ratio is not None, "active_ratio": round(ratio or 1.0, 2),
-                    **estimate(size, hw, ratio or 1.0)})
+                    **estimate(size, hw, ratio or 1.0, q.group(1) if q else "")})
     return sorted(out, key=lambda x: x["size"])
 
 
