@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
-import type { AppState, Conversation, Effort, Message } from "../types";
-import { EFFORT_PARAMS } from "../types";
+import type { AppState, Conversation, Effort, Message, PanelId, TaskApi } from "../types";
+import { EFFORT_PARAMS, PANELS } from "../types";
 import { streamGenerate } from "../api";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
@@ -14,12 +14,19 @@ interface Props {
   onContextChange: (n: number) => void;
   onEffortChange: (e: Effort) => void;
   onTps: (t: number) => void;
+  leftOpen: boolean;
+  onToggleLeft: () => void;
+  openPanels: PanelId[];
+  onTogglePanel: (id: PanelId) => void;
+  taskApi: TaskApi;
 }
+
+const tbtn: React.CSSProperties = { padding: "3px 9px", borderRadius: 6, fontSize: 12, color: "var(--text-mid)", border: "1px solid var(--border)" };
 
 let _id = 0;
 const uid = () => String(++_id);
 
-export default function ChatView({ conv, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onTps }: Props) {
+export default function ChatView({ conv, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onTps, leftOpen, onToggleLeft, openPanels, onTogglePanel, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
 
   const send = useCallback(async (text: string) => {
@@ -36,6 +43,8 @@ export default function ChatView({ conv, state, onConvUpdate, onModelChange, onC
 
     onConvUpdate({ messages: [...conv.messages, userMsg, asstMsg], title });
     setStreaming(true);
+    const taskId = taskApi.start(`chat: ${text.slice(0, 40)}`);
+    let failed = false;
 
     const t0 = performance.now();
     let tokens = 0;
@@ -61,7 +70,11 @@ export default function ChatView({ conv, state, onConvUpdate, onModelChange, onC
           ],
         });
       }
+    } catch (err) {
+      failed = true;
+      full += `\n[error] ${String(err)}`;
     } finally {
+      taskApi.finish(taskId, failed ? "error" : "done");
       onConvUpdate({
         messages: [
           ...conv.messages, userMsg,
@@ -70,7 +83,7 @@ export default function ChatView({ conv, state, onConvUpdate, onModelChange, onC
       });
       setStreaming(false);
     }
-  }, [streaming, state, conv, onConvUpdate, onTps]);
+  }, [streaming, state, conv, onConvUpdate, onTps, taskApi]);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)" }}>
@@ -79,10 +92,19 @@ export default function ChatView({ conv, state, onConvUpdate, onModelChange, onC
         height: 44, display: "flex", alignItems: "center", padding: "0 20px",
         borderBottom: "1px solid var(--border)", flexShrink: 0, gap: 10,
       }}>
+        <button onClick={onToggleLeft} title={leftOpen ? "hide sidebar" : "show sidebar"}
+          style={{ ...tbtn, background: leftOpen ? "var(--surface2)" : "transparent" }}>sidebar</button>
         <span style={{ fontSize: 13, color: "var(--text-mid)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {conv.title}
         </span>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)" }}>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
+          {PANELS.map(x => (
+            <button key={x.id} onClick={() => onTogglePanel(x.id)} title={x.title}
+              style={{ ...tbtn, background: openPanels.includes(x.id) ? "var(--surface2)" : "transparent",
+                color: openPanels.includes(x.id) ? "var(--text)" : "var(--text-dim)" }}>{x.id}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>
           {state.tps > 0 && <span>{state.tps.toFixed(1)} t/s</span>}
           <span style={{
             width: 7, height: 7, borderRadius: "50%", flexShrink: 0,

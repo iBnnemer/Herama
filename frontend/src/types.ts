@@ -46,3 +46,27 @@ export const EFFORT_PARAMS: Record<Effort, { temperature: number; top_p: number;
   balanced: { temperature: 0.7, top_p: 0.9,  label: "balanced" },
   smart:    { temperature: 1.0, top_p: 0.95, label: "smart"    },
 };
+
+export type PanelId = "tasks" | "plan" | "browser" | "terminal" | "files";
+
+export const PANELS: { id: PanelId; title: string }[] = [
+  { id: "tasks",    title: "background tasks" },
+  { id: "plan",     title: "plan" },
+  { id: "browser",  title: "browser" },
+  { id: "terminal", title: "terminal" },
+  { id: "files",    title: "project files" },
+];
+
+export type TaskStatus = "running" | "done" | "error";
+
+export interface Task {
+  id: string;
+  label: string;
+  status: TaskStatus;
+  ts: number;
+}
+
+export interface TaskApi {
+  start: (label: string) => string;
+  finish: (id: string, status: TaskStatus) => void;
+}
