@@ -33,6 +33,15 @@ if exist node_modules\electron\dist\electron.exe goto :node_ready
 echo       Downloading Electron runtime, please wait...
 set "ELECTRON_SKIP_BINARY_DOWNLOAD="
 call node node_modules\electron\install.js
+if exist node_modules\electron\dist\electron.exe if exist node_modules\electron\path.txt goto :node_ready
+echo       Standard download did not complete. Downloading Electron directly...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\get-electron.ps1" -Dir "%CD%\node_modules\electron"
+if exist node_modules\electron\dist\electron.exe if exist node_modules\electron\path.txt goto :node_ready
+goto :fail_electron
+:node_ready
+echo       Downloading Electron runtime, please wait...
+set "ELECTRON_SKIP_BINARY_DOWNLOAD="
+call node node_modules\electron\install.js
 if exist node_modules\electron\dist\electron.exe goto :node_ready
 echo       Retrying with a clean Electron install...
 rmdir /s /q node_modules\electron
