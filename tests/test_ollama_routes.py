@@ -119,3 +119,31 @@ def test_to_openai_converts_images():
     out = _to_openai([{"role": "user", "content": "hi", "images": ["AAAA"]}, {"role": "assistant", "content": "ok"}])
     assert out[0]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64,AAAA"
     assert out[1] == {"role": "assistant", "content": "ok"}
+
+
+def test_chat_streams_tool_calls(monkeypatch):
+    def fake_chat(self, messages, stream=False, **kw):
+        assert kw.get("tools")
+        def chunk(tc):
+            return {"choices": [{"delta": {"tool_calls": [tc]}}]}
+        return iter([
+            chunk({"index": 0, "id": "c1", "function": {"name": "read_", "arguments": ""}}),
+            chunk({"index": 0, "function": {"name": "file", "arguments": "{\"path\":"}}),
+            chunk({"index": 0, "function": {"arguments": "\"a.txt\"}"}}),
+            {"choices": [{"delta": {}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 5, "completion_tokens": 3}},
+        ])
+    monkeypatch.setattr(_FakeLlama, "create_chat_completion", fake_chat)
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object", "properties": {}}}}]
+    r = client.post("/api/chat", json={"model": "testmodel", "messages": [{"role": "user", "content": "x"}], "tools": tools})
+    final = [json.loads(ln) for ln in r.text.splitlines() if ln][-1]
+    assert final["done"] and final["done_reason"] == "tool_calls"
+    call = final["message"]["tool_calls"][0]
+    assert call["id"] == "c1" and call["function"]["name"] == "read_file"
+    assert json.loads(call["function"]["arguments"]) == {"path": "a.txt"}
+
+
+def test_tools_routes():
+    names = {t["name"] for t in client.get("/api/tools").json()}
+    assert {"read_file", "run_command", "remember", "ask_user", "update_plan"} <= names
+    r = client.post("/api/tools/run", json={"name": "calculate", "arguments": {"expression": "2+3"}}).json()
+    assert r == {"ok": True, "result": "5"}

@@ -101,6 +101,7 @@ class GenReq(BaseModel):
 class ChatReq(BaseModel):
     model: str
     messages: list[dict] = []
+    tools: list[dict] = []
     stream: bool = True
     options: dict = {}
     memory: bool = False
@@ -112,7 +113,7 @@ def _build(r: GenReq) -> str:
     if r.memory and r.prompt:
         facts = memory.search(r.prompt)
         if facts:
-            sys += "\nKnown facts:\n" + "\n".join(f"- {f['content']}" for f in facts)
+            sys += "\nKnown facts:\n" + "\n".join(f"- #{f['id']} {f['content']}" for f in facts)
     if r.raw or not sys.strip():
         return r.prompt
     return f"{sys.strip()}\n\n{r.prompt}"
@@ -165,7 +166,7 @@ def _inject_memory(messages: list[dict], query: str) -> list[dict]:
     facts = memory.search(query)
     if not facts:
         return messages
-    block = "Known facts:\n" + "\n".join(f"- {f['content']}" for f in facts)
+    block = "Known facts:\n" + "\n".join(f"- #{f['id']} {f['content']}" for f in facts)
     if messages and messages[0].get("role") == "system":
         msgs = list(messages)
         msgs[0] = {"role": "system", "content": msgs[0]["content"] + "\n" + block}
@@ -200,7 +201,8 @@ def chat(r: ChatReq):
     last_user = next((m["content"] for m in reversed(r.messages) if m.get("role") == "user"), "")
     msgs = _inject_memory(r.messages, last_user) if r.memory and last_user else r.messages
     has_images = any(m.get("images") for m in msgs)
-    gen = engine.chat(r.model, _to_openai(msgs), r.options, r.stream, vision=has_images)
+    opts = {**r.options, "tools": r.tools} if r.tools else r.options
+    gen = engine.chat(r.model, _to_openai(msgs), opts, r.stream, vision=has_images)
 
     def _msg(text: str) -> dict:
         return {"role": "assistant", "content": text}
@@ -208,9 +210,15 @@ def chat(r: ChatReq):
     def final(raw, text):
         memory.log_turn(r.model, last_user, text, auto_extract=r.auto_extract)
         u = (raw or {}).get("usage", {})
-        fr = ((raw or {}).get("choices") or [{}])[0].get("finish_reason") or "stop"
+        choice = ((raw or {}).get("choices") or [{}])[0]
+        fr = choice.get("finish_reason") or "stop"
+        calls = (raw or {}).get("tool_calls") or (choice.get("message") or {}).get("tool_calls")
+        msg = _msg("" if r.stream else text)
+        if calls:
+            msg["tool_calls"] = calls
+            fr = "tool_calls"
         return {"model": r.model, "created_at": _now(),
-                "message": _msg("" if r.stream else text),
+                "message": msg,
                 "done": True, "done_reason": fr,
                 "total_duration": time.perf_counter_ns() - t0,
                 "prompt_eval_count": u.get("prompt_tokens", 0),

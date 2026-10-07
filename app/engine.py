@@ -219,6 +219,7 @@ class Engine:
             top_k=opts.get("top_k", 40),
             stop=opts.get("stop") or None,
             seed=opts.get("seed", -1),
+            tools=opts.get("tools") or None,
         )
 
     def generate(self, name: str, prompt: str, opts: dict, stream: bool):
@@ -257,10 +258,18 @@ class Engine:
                     yield msg.get("content", "")
                     yield r
                     return
-                last, t_first, n = None, 0.0, 0
+                last, t_first, n, calls = None, 0.0, 0, {}
                 for c in llm.create_chat_completion(messages=messages, stream=True, **kw):
                     last = c
                     delta = c["choices"][0].get("delta", {}) if c.get("choices") else {}
+                    for tc in delta.get("tool_calls") or []:  # arguments arrive in fragments
+                        cur = calls.setdefault(tc.get("index", len(calls)), {"id": "", "name": "", "arguments": ""})
+                        cur["id"] = tc.get("id") or cur["id"]
+                        fn = tc.get("function") or {}
+                        cur["name"] += fn.get("name") or ""
+                        cur["arguments"] += fn.get("arguments") or ""
+                    if calls:
+                        monitor.generating()
                     text = delta.get("content") or ""
                     if text:
                         n += 1
@@ -270,7 +279,12 @@ class Engine:
                         yield text
                 self._learn_speed(last, t_first)
                 self._record(last, t_req, "done")
-                yield last or {}
+                last = last or {}
+                if calls:
+                    last["tool_calls"] = [{"id": c["id"] or f"call_{i}", "type": "function",
+                                           "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}}
+                                          for i, c in sorted(calls.items())]
+                yield last
             except GeneratorExit:  # the client stopped reading
                 monitor.finish("stopped", 0, 0, 0, 0.0, 0.0, time.perf_counter() - t_req)
                 raise
