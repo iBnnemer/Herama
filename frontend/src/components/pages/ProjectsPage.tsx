@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Agent, Conversation, Project } from "../../types";
 import { projectFolders } from "../../util";
 import Modal from "../Modal";
+import type { ChatMsg } from "../../api";
+import { splitThink } from "../../util";
 import PageShell, { card, ghostBtn, primaryBtn, Empty } from "./PageShell";
 
 interface Props {
@@ -13,10 +15,10 @@ interface Props {
   onOpenId: (id: string) => void;
   creating: boolean;
   onCloseCreate: () => void;
-  onCreate: (name: string, brief: string, folders: string[]) => void;
+  onCreate: (name: string, folders: string[]) => void;
   onStartCreate: () => void;
   onUpdate: (id: string, patch: Partial<Project>) => void;
-  onRewrite: (id: string, change: string) => Promise<void>;
+  assist: (messages: ChatMsg[], signal: AbortSignal) => AsyncGenerator<string>;
   onOpenConv: (id: string) => void;
   onNewSession: (projectId: string) => void;
   onRemove: (id: string) => void;
@@ -28,9 +30,8 @@ const input: React.CSSProperties = {
 };
 const label: React.CSSProperties = { fontSize: 12, color: "var(--text-dim)", margin: "16px 0 6px", textTransform: "uppercase", letterSpacing: "0.08em" };
 
-function NewProject(p: { onClose: () => void; onCreate: (name: string, brief: string, folders: string[]) => void }) {
+function NewProject(p: { onClose: () => void; onCreate: (name: string, folders: string[]) => void }) {
   const [name, setName] = useState("");
-  const [brief, setBrief] = useState("");
   const [folders, setFolders] = useState<string[]>([]);
   const add = async () => {
     const d = await window.herama?.pickFolder();
@@ -40,9 +41,6 @@ function NewProject(p: { onClose: () => void; onCreate: (name: string, brief: st
     <Modal title="New project" onClose={p.onClose}>
       <div style={{ ...label, marginTop: 0 }}>Name</div>
       <input style={input} autoFocus value={name} onChange={e => setName(e.target.value)} />
-      <div style={label}>What is this project about?</div>
-      <textarea style={{ ...input, minHeight: 90, resize: "vertical" }} value={brief} onChange={e => setBrief(e.target.value)}
-        placeholder="Describe it in a few words. The model writes the description and instructions for you." />
       <div style={{ display: "flex", alignItems: "center", ...label }}>
         <span style={{ flex: 1 }}>Folders</span>
         <button style={ghostBtn} onClick={() => void add()}>Add folder</button>
@@ -54,7 +52,7 @@ function NewProject(p: { onClose: () => void; onCreate: (name: string, brief: st
         </div>
       ))}
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
-        <button style={primaryBtn} disabled={!name.trim()} onClick={() => p.onCreate(name.trim(), brief.trim(), folders)}>Create</button>
+        <button style={primaryBtn} disabled={!name.trim()} onClick={() => p.onCreate(name.trim(), folders)}>Create</button>
       </div>
     </Modal>
   );
@@ -91,15 +89,6 @@ export default function ProjectsPage(p: Props) {
 function ProjectDetail(p: Props & { project: Project }) {
   const pr = p.project;
   const sessions = p.conversations.filter(c => c.projectId === pr.id);
-  const [change, setChange] = useState("");
-  const [busy, setBusy] = useState(false);
-  const rewrite = async () => {
-    if (!change.trim() || busy) return;
-    setBusy(true);
-    await p.onRewrite(pr.id, change.trim());
-    setBusy(false);
-    setChange("");
-  };
   const folders = projectFolders(pr);
   const setFolders = (list: string[]) => p.onUpdate(pr.id, { folders: list, dir: undefined });
   const addFolder = async () => {
@@ -110,6 +99,7 @@ function ProjectDetail(p: Props & { project: Project }) {
   return (
     <PageShell title={pr.name} hint="Everything here is added to the context of every session in this project."
       action={<button style={ghostBtn} onClick={() => p.onOpenId("")}>All projects</button>}>
+      <ProjectAssistant key={pr.id} project={pr} assist={p.assist} onUpdate={p.onUpdate} />
       <div style={label}>Name</div>
       <input style={input} value={pr.name} onChange={e => p.onUpdate(pr.id, { name: e.target.value })} />
       <div style={label}>Description</div>
@@ -120,12 +110,6 @@ function ProjectDetail(p: Props & { project: Project }) {
       <textarea style={{ ...input, minHeight: 110, resize: "vertical" }} value={pr.instructions ?? ""}
         placeholder="How should the model behave in this project? Tone, rules, background..."
         onChange={e => p.onUpdate(pr.id, { instructions: e.target.value })} />
-
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <input style={input} value={change} disabled={busy} placeholder="Ask the model to edit the description and instructions..."
-          onChange={e => setChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") void rewrite(); }} />
-        <button style={primaryBtn} disabled={busy || !change.trim()} onClick={() => void rewrite()}>{busy ? "Editing..." : "Edit with model"}</button>
-      </div>
 
       <div style={label}>Project agent</div>
       <select style={input} value={pr.agentId ?? ""} onChange={e => p.onUpdate(pr.id, { agentId: e.target.value || undefined })}>
@@ -163,5 +147,96 @@ function ProjectDetail(p: Props & { project: Project }) {
         </button>
       </div>
     </PageShell>
+  );
+}
+
+const BLOCK = /```project\s*([\s\S]*?)```/;
+
+/** Chat where the model asks about the project and fills in (or edits) its description and instructions. */
+function ProjectAssistant(p: { project: Project; assist: Props["assist"]; onUpdate: Props["onUpdate"] }) {
+  const pr = p.project;
+  const [msgs, setMsgs] = useState<ChatMsg[]>([]);
+  const [text, setText] = useState("");
+  const [live, setLive] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ctrl = useRef<AbortController | null>(null);
+  const started = useRef(false);
+  const latest = useRef(pr);
+  latest.current = pr;
+
+  const system = () => {
+    const c = latest.current;
+    return `You help the user set up a project in an AI assistant workspace. Project name: ${c.name}. ` +
+      `Linked folders: ${projectFolders(c).join(", ") || "none"}. ` +
+      `Current description: ${c.description || "(empty)"}. Current instructions: ${c.instructions || "(empty)"}. ` +
+      "Talk in the user's language. Ask at most two short questions at a time about what the project is for and how the assistant should behave. " +
+      "As soon as you can, or when the user asks for a change, reply with a short message plus a fenced block exactly like:\n" +
+      "```project\n{\"description\": \"one sentence\", \"instructions\": \"full instructions\"}\n```\n" +
+      "The block must always contain the complete updated values.";
+  };
+
+  const run = async (history: ChatMsg[]) => {
+    const c = new AbortController();
+    ctrl.current = c;
+    setBusy(true);
+    setLive("");
+    let out = "";
+    try {
+      for await (const piece of p.assist([{ role: "system", content: system() }, ...history], c.signal)) {
+        out += piece;
+        setLive(splitThink(out).answer);
+      }
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) out += `${out ? "\n" : ""}[error] ${String(e)}`;
+    }
+    const answer = splitThink(out).answer;
+    const m = answer.match(BLOCK);
+    if (m) {
+      try {
+        const j = JSON.parse(m[1]) as { description?: string; instructions?: string };
+        p.onUpdate(pr.id, { ...(j.description ? { description: j.description } : {}), ...(j.instructions ? { instructions: j.instructions } : {}) });
+      } catch { /* ignore malformed block */ }
+    }
+    if (answer) setMsgs([...history, { role: "assistant", content: answer }]);
+    setLive("");
+    setBusy(false);
+    ctrl.current = null;
+  };
+
+  useEffect(() => {
+    if (started.current || pr.instructions) return;
+    started.current = true;
+    void run([{ role: "user", content: "Help me set up this project." }]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const send = () => {
+    if (!text.trim() || busy) return;
+    const history: ChatMsg[] = [...(msgs.length ? msgs : []), { role: "user", content: text.trim() }];
+    setMsgs(history);
+    setText("");
+    void run(history);
+  };
+
+  const show = (m: ChatMsg) => m.content.replace(BLOCK, "(description and instructions updated)").trim();
+  const shown = msgs.filter((m, i) => !(i === 0 && m.content === "Help me set up this project."));
+
+  return (
+    <div style={{ ...card, marginBottom: 8 }}>
+      <div style={{ fontSize: 12, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Project assistant</div>
+      <div style={{ maxHeight: 280, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+        {shown.length === 0 && !busy && <div style={{ fontSize: 12, color: "var(--text-dim)" }}>Tell the model what you want to change in the description or instructions.</div>}
+        {shown.map((m, i) => (
+          <div key={i} style={{ fontSize: 13, whiteSpace: "pre-wrap", alignSelf: m.role === "user" ? "flex-end" : "flex-start", background: m.role === "user" ? "var(--bg2)" : "transparent", borderRadius: 8, padding: m.role === "user" ? "6px 10px" : 0 }}>{show(m)}</div>
+        ))}
+        {busy && <div style={{ fontSize: 13, whiteSpace: "pre-wrap", color: "var(--text-mid)" }}>{show({ role: "assistant", content: live }) || "..."}</div>}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <input style={input} value={text} placeholder="Reply to the assistant..." onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") send(); }} />
+        {busy
+          ? <button style={ghostBtn} onClick={() => ctrl.current?.abort()}>Stop</button>
+          : <button style={primaryBtn} disabled={!text.trim()} onClick={send}>Send</button>}
+      </div>
+    </div>
   );
 }
