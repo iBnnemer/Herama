@@ -1,4 +1,4 @@
-import type { Agent, Effort, EFFORT_PARAMS } from "./types";
+import type { Agent } from "./types";
 
 export const BASE = "http://127.0.0.1:11434";
 
@@ -44,36 +44,50 @@ export async function deleteAgent(id: string): Promise<void> {
   await fetch(`${BASE}/api/agents/${id}`, { method: "DELETE" });
 }
 
-export async function* streamGenerate(opts: {
+export interface ChatMsg { role: "system" | "user" | "assistant"; content: string }
+
+export async function fetchSkills(): Promise<{ name: string; desc: string }[]> {
+  try {
+    const r = await fetch(`${BASE}/api/skills`);
+    if (!r.ok) return [];
+    const d = await r.json() as Record<string, { desc?: string }>;
+    return Object.entries(d).map(([name, v]) => ({ name, desc: v.desc ?? "" }));
+  } catch { return []; }
+}
+
+export async function* streamChat(opts: {
   model: string;
-  prompt: string;
-  system?: string;
+  messages: ChatMsg[];
   numCtx: number;
   temperature: number;
   top_p: number;
-}): AsyncGenerator<{ token: string; done: boolean }> {
-  const r = await fetch(`${BASE}/api/generate`, {
+}): AsyncGenerator<string> {
+  const r = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: opts.model,
-      prompt: opts.prompt,
-      system: opts.system,
+      messages: opts.messages,
       stream: true,
       options: { num_ctx: opts.numCtx, temperature: opts.temperature, top_p: opts.top_p },
     }),
   });
-  if (!r.body) return;
+  if (!r.ok || !r.body) throw new Error(`backend error ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const reader = r.body.getReader();
   const dec = new TextDecoder();
+  let buf = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    for (const line of dec.decode(value).split("\n").filter(Boolean)) {
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines.filter(Boolean)) {
       try {
         const obj = JSON.parse(line);
-        if (obj.response !== undefined) yield { token: obj.response as string, done: !!obj.done };
-      } catch { /* skip */ }
+        const piece = obj.message?.content;
+        if (piece) yield piece as string;
+      } catch { /* skip malformed line */ }
     }
   }
 }

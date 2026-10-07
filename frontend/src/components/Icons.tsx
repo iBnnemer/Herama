@@ -1,6 +1,7 @@
 export type IconName =
   | "sidebar" | "tasks" | "plan" | "browser" | "terminal" | "files"
-  | "gear" | "send" | "chevron" | "close";
+  | "gear" | "send" | "chevron" | "close"
+  | "search" | "pin" | "plus" | "trash" | "bolt" | "message" | "box" | "clock";
 
 const PATHS: Record<IconName, JSX.Element> = {
   sidebar: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
@@ -13,6 +14,14 @@ const PATHS: Record<IconName, JSX.Element> = {
   send: <path d="M12 19V5M5 12l7-7 7 7" />,
   chevron: <path d="M6 9l6 6 6-6" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  search: <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></>,
+  pin: <><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z" /><path d="M12 14v7" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
+  trash: <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />,
+  bolt: <path d="M13 3L5 14h6l-1 7 8-11h-6z" />,
+  message: <path d="M4 5h16v11H9l-5 4z" />,
+  box: <><path d="M3 8l9-5 9 5v8l-9 5-9-5z" /><path d="M3 8l9 5 9-5M12 13v8" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
 };
 
 export default function Icon({ name, size = 16 }: { name: IconName; size?: number }) {

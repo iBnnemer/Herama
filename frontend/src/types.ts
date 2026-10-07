@@ -19,7 +19,25 @@ export interface Conversation {
   title: string;
   messages: Message[];
   agentId?: string;
+  projectId?: string;
+  pinned?: boolean;
 }
+
+export type View = "chat" | "projects" | "capabilities" | "messaging" | "artifacts" | "jobs";
+
+export interface Project { id: string; name: string; dir: string }
+
+export interface Job {
+  id: string;
+  name: string;
+  prompt: string;
+  everyMin: number;
+  enabled: boolean;
+  createdAt: number;
+  lastRun?: number;
+}
+
+export interface InboxItem { id: string; title: string; text: string; ts: number; read: boolean }
 
 export interface Agent {
   id: string;

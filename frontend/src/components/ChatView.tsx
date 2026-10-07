@@ -1,127 +1,89 @@
 import { useCallback, useState } from "react";
-import type { AppState, Conversation, Effort, Message, PanelId, TaskApi } from "../types";
-import { EFFORT_PARAMS, PANELS } from "../types";
-import { streamGenerate } from "../api";
+import type { Agent, AppState, Conversation, Effort, Message } from "../types";
+import { EFFORT_PARAMS } from "../types";
+import { streamChat } from "../api";
+import type { ChatMsg } from "../api";
+import { rid } from "../util";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
-import Icon from "./Icons";
-import type { IconName } from "./Icons";
 
 interface Props {
   conv: Conversation;
+  agent?: Agent;
   state: AppState;
-  onConvUpdate: (p: Partial<Conversation>) => void;
-  onNewConv: (agentId?: string) => void;
+  onConvUpdate: (id: string, patch: Partial<Conversation>) => void;
   onModelChange: (m: string) => void;
   onContextChange: (n: number) => void;
   onEffortChange: (e: Effort) => void;
   onTps: (t: number) => void;
-  leftOpen: boolean;
-  onToggleLeft: () => void;
-  openPanels: PanelId[];
-  onTogglePanel: (id: PanelId) => void;
-  taskApi: TaskApi;
+  taskApi: import("../types").TaskApi;
 }
 
-const tbtn: React.CSSProperties = { padding: 6, borderRadius: 7, color: "var(--text-mid)", border: "1px solid transparent", display: "flex" };
+const HISTORY_LIMIT = 40;
 
-let _id = 0;
-const uid = () => String(++_id);
-
-export default function ChatView({ conv, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onTps, leftOpen, onToggleLeft, openPanels, onTogglePanel, taskApi }: Props) {
+export default function ChatView({ conv, agent, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
+  const model = agent?.model || state.activeModel;
 
   const send = useCallback(async (text: string) => {
-    if (streaming || !state.activeModel) return;
+    if (streaming || !model) return;
     const ep = EFFORT_PARAMS[state.effort];
+    const cid = conv.id;
 
-    const userMsg: Message = { id: uid(), role: "user", content: text, ts: Date.now() };
-    const asstId = uid();
-    const asstMsg: Message = { id: asstId, role: "assistant", content: "", ts: Date.now(), streaming: true };
+    const userMsg: Message = { id: rid(), role: "user", content: text, ts: Date.now() };
+    const asstId = rid();
+    const asstTs = Date.now();
+    const base = [...conv.messages, userMsg];
+    const title = conv.messages.length === 0 ? text.slice(0, 40) + (text.length > 40 ? "…" : "") : conv.title;
 
-    const title = conv.messages.length === 0
-      ? text.slice(0, 40) + (text.length > 40 ? "…" : "")
-      : conv.title;
+    const show = (content: string, live: boolean) =>
+      onConvUpdate(cid, {
+        title,
+        messages: [...base, { id: asstId, role: "assistant", content, ts: asstTs, streaming: live }],
+      });
 
-    onConvUpdate({ messages: [...conv.messages, userMsg, asstMsg], title });
+    const history: ChatMsg[] = base
+      .filter(m => m.role !== "tool")
+      .slice(-HISTORY_LIMIT)
+      .map(m => ({ role: m.role as "user" | "assistant", content: m.content }));
+    const messages: ChatMsg[] = agent?.system_prompt
+      ? [{ role: "system", content: agent.system_prompt }, ...history]
+      : history;
+
+    show("", true);
     setStreaming(true);
     const taskId = taskApi.start(`chat: ${text.slice(0, 40)}`);
     let failed = false;
-
-    const t0 = performance.now();
-    let tokens = 0;
     let full = "";
+    let tokens = 0;
+    const t0 = performance.now();
 
     try {
-      for await (const { token } of streamGenerate({
-        model: state.activeModel,
-        prompt: text,
-        system: undefined,
-        numCtx: state.contextLength,
-        temperature: ep.temperature,
-        top_p: ep.top_p,
+      for await (const piece of streamChat({
+        model, messages, numCtx: state.contextLength, temperature: ep.temperature, top_p: ep.top_p,
       })) {
-        full += token;
+        full += piece;
         tokens++;
         const elapsed = (performance.now() - t0) / 1000;
         if (elapsed > 0.5) onTps(tokens / elapsed);
-        onConvUpdate({
-          messages: [
-            ...conv.messages, userMsg,
-            { id: asstId, role: "assistant", content: full, ts: asstMsg.ts, streaming: true },
-          ],
-        });
+        show(full, true);
       }
     } catch (err) {
       failed = true;
-      full += `\n[error] ${String(err)}`;
+      full += `${full ? "\n" : ""}[error] ${String(err)}`;
     } finally {
       taskApi.finish(taskId, failed ? "error" : "done");
-      onConvUpdate({
-        messages: [
-          ...conv.messages, userMsg,
-          { id: asstId, role: "assistant", content: full, ts: asstMsg.ts, streaming: false },
-        ],
-      });
+      show(full, false);
       setStreaming(false);
     }
-  }, [streaming, state, conv, onConvUpdate, onTps, taskApi]);
+  }, [streaming, model, state.effort, state.contextLength, conv, agent, onConvUpdate, onTps, taskApi]);
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)" }}>
-      {/* Top bar */}
-      <div className="titlebar" style={{
-        height: 44, display: "flex", alignItems: "center", padding: "0 20px",
-        borderBottom: "1px solid var(--border)", flexShrink: 0, gap: 10,
-      }}>
-        <button onClick={onToggleLeft} title={leftOpen ? "hide sidebar" : "show sidebar"}
-          style={{ ...tbtn, background: leftOpen ? "var(--surface2)" : "transparent" }}><Icon name="sidebar" /></button>
-        <span style={{ fontSize: 13, color: "var(--text-mid)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {conv.title}
-        </span>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
-          {PANELS.map(x => (
-            <button key={x.id} onClick={() => onTogglePanel(x.id)} title={x.title}
-              style={{ ...tbtn, background: openPanels.includes(x.id) ? "var(--surface2)" : "transparent",
-                color: openPanels.includes(x.id) ? "var(--text)" : "var(--text-dim)" }}><Icon name={x.id as IconName} /></button>
-          ))}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>
-          {state.tps > 0 && <span>{state.tps.toFixed(1)} t/s</span>}
-          <span style={{
-            width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-            background: state.connected ? "var(--green)" : "var(--border2)",
-          }} />
-        </div>
-      </div>
-
-      {/* Messages */}
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)", minHeight: 0 }}>
       <MessageList messages={conv.messages} />
-
-      {/* Input */}
       <InputArea
         models={state.models}
-        activeModel={state.activeModel}
+        activeModel={model}
         effort={state.effort}
         contextLength={state.contextLength}
         tps={state.tps}
@@ -129,8 +91,8 @@ export default function ChatView({ conv, state, onConvUpdate, onModelChange, onC
         onModelChange={onModelChange}
         onEffortChange={onEffortChange}
         onContextChange={onContextChange}
-        disabled={streaming || !state.connected || !state.activeModel}
-        placeholder={!state.activeModel ? "no model loaded — start backend first" : "message herama…"}
+        disabled={streaming || !state.connected || !model}
+        placeholder={!state.connected ? "backend offline" : !model ? "no model found - put a .gguf file in the models folder" : agent ? `message ${agent.name}...` : "message herama..."}
       />
     </div>
   );
