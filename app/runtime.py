@@ -44,7 +44,7 @@ def nvidia_cuda_version() -> str | None:
         if os.path.exists(p)), None)
     if not exe:
         return None
-    m = re.search(r"CUDA Version:\s*([\d.]+)", _run([exe]))
+    m = re.search(r"CUDA Version:\s*([\d.]+)", _run([exe], 40))
     return m.group(1) if m else None
 
 
@@ -71,7 +71,7 @@ def detect_backend() -> str:
     system = platform.system()
     if system == "Darwin":
         return "metal"
-    if nvidia_cuda_version() and system == "Windows":
+    if system == "Windows" and (nvidia_cuda_version() or any("nvidia" in n.lower() for n in gpu_names())):
         return "cuda"
     return "vulkan" if gpu_names() else "cpu"
 
@@ -157,7 +157,7 @@ def _install(backend: str) -> dict:
     system, machine = platform.system(), platform.machine()
     with _http(RELEASE_API) as r:
         releases = json.load(r)
-    cuda = nvidia_cuda_version()
+    cuda = nvidia_cuda_version() or ("12.4" if any("nvidia" in n.lower() for n in gpu_names()) else None)
     picked, rel, sizes = None, {}, {}
     for rel in releases:
         sizes = {a["name"]: a for a in rel.get("assets", [])}
