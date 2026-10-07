@@ -3,6 +3,7 @@ import type { Safety, Agent, Project, Attachment, AppState, Conversation, Effort
 import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune, loadTools, runTool } from "../api";
 import type { ChatMsg, ModelState, ToolCall, ToolInfo } from "../api";
+import { TOOL_GROUPS, activeTools, matchGroups } from "../toolRouting";
 import { projectContext, projectFolders, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import InputArea from "./InputArea";
@@ -28,7 +29,8 @@ interface Queued { text: string; atts: Attachment[] }
 
 const HISTORY_LIMIT = 40;
 const MAX_ROUNDS = 10;
-const TOOLS_HINT = "You have tools for files, the web, shell commands, skills, memory and small utilities. Use them when they help, and never claim you did something you did not do with a tool. " +
+const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory or Utilities), call use_tools to switch it on. " +
+  "Use tools when they help, and never claim you did something you did not do with a tool. " +
   "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
   "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets.";
 
@@ -131,9 +133,13 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
     let tFirst = 0;
 
     const all = await loadTools();
-    const offered = all.filter(t => allowedBySafety(t, state.safety));
-    const tools = offered.map(t => t.schema);
-    if (offered.length) {
+    // Tool groups switch on from keywords in the message (and the groups the previous turn used), so the model never sees every tool at once.
+    const lastUser = conv.messages.map(m => m.role).lastIndexOf("user");
+    const inherited = conv.messages.slice(Math.max(0, lastUser)).filter(m => m.role === "tool")
+      .map(m => all.find(t => t.name === (m.toolLabel ?? "").split(/\s/)[0])?.group).filter((g): g is string => !!g);
+    const active = new Set<string>([...matchGroups(text), ...inherited]);
+    const pick = () => activeTools(all, active).filter(t => allowedBySafety(t, state.safety));
+    if (all.some(t => allowedBySafety(t, state.safety))) {
       if (messages[0]?.role === "system") messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${TOOLS_HINT}` };
       else messages.unshift({ role: "system", content: TOOLS_HINT });
     }
@@ -144,7 +150,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
         let calls: ToolCall[] = [];
         for await (const piece of streamChat({
           model, messages, numCtx: state.contextLength, ...approvedTune(state, model), temperature: ep.temperature, top_p: ep.top_p,
-          signal: ctrl.signal, tools, onToolCalls: c => { calls = c; },
+          signal: ctrl.signal, tools: pick().map(t => t.schema), onToolCalls: c => { calls = c; },
         })) {
           text += piece;
           if (!tFirst) tFirst = performance.now();
@@ -177,6 +183,12 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
           } else if (name === "ask_user") {
             question = String(args.question ?? "");
             result = { ok: true, result: "Question shown to the user." };
+          } else if (name === "use_tools") {
+            const asked = (Array.isArray(args.groups) ? args.groups : []).map(String).filter(g => (TOOL_GROUPS as readonly string[]).includes(g));
+            asked.forEach(g => active.add(g));
+            const names = all.filter(t => asked.includes(t.group) && allowedBySafety(t, state.safety)).map(t => t.name);
+            result = asked.length ? { ok: true, result: `Switched on: ${asked.join(", ")}. Tools now available: ${names.join(", ") || "none in this mode"}.` }
+              : { ok: false, result: `Unknown group. Choose from: ${TOOL_GROUPS.join(", ")}.` };
           } else if (name === "update_plan") {
             result = updatePlan(args.steps);
           } else {

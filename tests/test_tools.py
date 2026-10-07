@@ -145,4 +145,5 @@ def test_listing_has_schema_for_every_tool():
     for it in items:
         assert it["schema"]["function"]["name"] == it["name"] and it["description"]
         json.dumps(it["schema"])
+    assert {"use_tools", "ask_user", "update_plan"} <= {i["name"] for i in items if i["client"]}
     assert {i["kind"] for i in items} <= {"read", "net", "memory", "write", "exec", "ui"}

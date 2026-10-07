@@ -596,6 +596,10 @@ def _system_info(a, ctx):
 # ── client-side tools (handled by the app, not run here) ─────────────────────
 
 CLIENT_TOOLS = [
+    Tool("use_tools", "Utilities", "ui",
+         "Switch on more tools when the task needs them. Only a few tools are active at first. Groups: Files (read, write, search files), Web (search, open pages), "
+         "Shell (run commands), Skills (saved programs), Memory (remember facts), Utilities (time, calculator, computer info).",
+         {"groups": _arr({"type": "string", "enum": ["Files", "Web", "Shell", "Skills", "Memory", "Utilities"]})}, ["groups"], lambda a, c: ""),
     Tool("ask_user", "Utilities", "ui", "Ask the user a question when you need a decision or missing detail, then stop and wait for the answer.",
          {"question": S}, ["question"], lambda a, c: ""),
     Tool("update_plan", "Utilities", "ui",
