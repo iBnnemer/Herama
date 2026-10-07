@@ -10,22 +10,33 @@ EXPERT_READ_SHARE = 0.8   # share of the bytes read per token that comes from ex
 RESERVE_GB = 1.2          # driver, display and compute buffers kept free in VRAM
 
 
+def _per_layer(v, layers: int, default: int) -> list[int]:
+    if isinstance(v, list) and v:
+        return [int(x) for x in (v + [v[-1]] * layers)[:layers]]
+    return [int(v) if isinstance(v, (int, float)) and v > 0 else default] * layers
+
+
 def _kv_gb(m: dict, ctx: int, layers: int, name: str = "") -> float:
-    """f16 KV cache size. Sliding-window models (Gemma) keep only a short window on most layers."""
+    """f16 KV cache size. Handles per-layer KV heads, layers without attention and sliding-window layers."""
     emb = int(m.get("embedding_length") or 4096)
     heads = int(m.get("attention.head_count") or 32)
-    kv_heads = m.get("attention.head_count_kv")
-    kv_heads = int(kv_heads) if isinstance(kv_heads, (int, float)) and kv_heads > 0 else heads
+    kvh = _per_layer(m.get("attention.head_count_kv"), layers, heads)
     kl, vl = m.get("attention.key_length"), m.get("attention.value_length")
-    per_tok = (int(kl) + int(vl) if kl and vl else 2 * (emb // heads)) * kv_heads * 2  # bytes per token per layer
+    width = int(kl) + int(vl) if isinstance(kl, (int, float)) and isinstance(vl, (int, float)) else 2 * (emb // heads)
     window = m.get("attention.sliding_window")
     pattern = m.get("attention.sliding_window_pattern")
-    if not isinstance(window, int) or window <= 0:
-        window, pattern = (1024, 6) if "gemma" in name.lower() else (0, None)
-    if window and isinstance(pattern, int) and pattern > 1:
-        glob = layers // pattern or 1
-        return per_tok * (glob * ctx + (layers - glob) * min(ctx, window)) / GB
-    return per_tok * layers * ctx / GB
+    window = int(window) if isinstance(window, (int, float)) and window > 0 else 0
+    if isinstance(pattern, list) and window:
+        sliding = [bool(x) for x in (pattern + [0] * layers)[:layers]]
+    elif window and isinstance(pattern, int) and pattern > 1:
+        sliding = [(i + 1) % pattern != 0 for i in range(layers)]
+    elif "gemma" in name.lower():  # metadata gave no usable pattern: Gemma uses 5 local layers per global one
+        window = window or 1024
+        sliding = [(i + 1) % 6 != 0 for i in range(layers)]
+    else:
+        sliding = [False] * layers
+    total = sum(width * k * 2 * (min(ctx, window) if sw else ctx) for k, sw in zip(kvh, sliding))
+    return total / GB
 
 
 def _speed(size: float, ratio: float, moe: bool, layers: int, ngl: int, cpu_moe: int,

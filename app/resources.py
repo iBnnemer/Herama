@@ -22,8 +22,11 @@ def _read_val(f, t):
         return f.read(n).decode("utf-8", "replace")
     if t == 9:
         it, n = struct.unpack("<IQ", f.read(12))
-        if it in _SCALAR:  # skip numeric arrays (tokenizer scores etc.)
-            f.seek(n * struct.calcsize(_SCALAR[it]), 1)
+        if it in _SCALAR:
+            fmt = "<" + _SCALAR[it]
+            if n <= 1024:  # per-layer values (head counts, sliding-window flags) are worth keeping
+                return [struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0] for _ in range(n)]
+            f.seek(n * struct.calcsize(_SCALAR[it]), 1)  # tokenizer scores etc.
         else:
             for _ in range(n):
                 _read_val(f, it)

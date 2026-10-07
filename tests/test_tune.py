@@ -72,3 +72,11 @@ def test_fewer_active_experts_is_faster(tmp_path, monkeypatch):
     base = tune.propose(f, 4096)
     fast = tune.propose(f, 4096, top_k=4)
     assert base["top_k"] == 8 and fast["top_k"] == 4 and fast["tps"] > base["tps"]
+
+
+def test_per_layer_metadata_arrays(tmp_path, monkeypatch):
+    # 48 layers: every 6th is global, the rest slide over 1024 tokens; some layers have no attention (0 KV heads)
+    meta = {**DENSE, "block_count": 48, "attention.head_count_kv": [8] * 40 + [0] * 8,
+            "attention.sliding_window": 1024, "attention.sliding_window_pattern": [1, 1, 1, 1, 1, 0] * 8}
+    f = _model(tmp_path, monkeypatch, 7, meta, "gemma-x-Q4_K_M.gguf")
+    assert tune.propose(f, 65536)["kv_gb"] < 3
