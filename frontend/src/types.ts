@@ -2,9 +2,9 @@ export type Mode = "chat" | "agents";
 
 export type Safety = "ask" | "plan" | "auto" | "off";
 
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export type Effort = "low" | "medium" | "high" | "max";
 
-export const EFFORT_LEVELS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+export const EFFORT_LEVELS: Effort[] = ["low", "medium", "high", "max"];
 
 export interface Message {
   id: string;
@@ -83,11 +83,10 @@ export interface AppState {
 }
 
 export const EFFORT_PARAMS: Record<Effort, { temperature: number; top_p: number; label: string; short: string }> = {
-  low:    { temperature: 0.2, top_p: 0.80, label: "Precise",    short: "Prec" },
-  medium: { temperature: 0.5, top_p: 0.88, label: "Balanced",   short: "Bal"  },
-  high:   { temperature: 0.7, top_p: 0.92, label: "Creative",   short: "Crea" },
-  xhigh:  { temperature: 0.9, top_p: 0.95, label: "Extra high", short: "XHigh" },
-  max:    { temperature: 1.1, top_p: 0.98, label: "Max",        short: "Max"  },
+  low:    { temperature: 0.2, top_p: 0.80, label: "Low",    short: "Low"    },
+  medium: { temperature: 0.5, top_p: 0.88, label: "Medium", short: "Medium" },
+  high:   { temperature: 0.8, top_p: 0.93, label: "High",   short: "High"   },
+  max:    { temperature: 1.1, top_p: 0.98, label: "Max",    short: "Max"    },
 };
 
 export type PanelId = "tasks" | "plan" | "browser" | "terminal" | "files";

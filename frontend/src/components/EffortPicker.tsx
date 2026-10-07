@@ -5,10 +5,14 @@ import Icon from "./Icons";
 
 interface Props { effort: Effort; onChange: (e: Effort) => void }
 
+const RECOMMENDED: Effort = "medium";
+
 export default function EffortPicker({ effort, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const last = EFFORT_LEVELS.length - 1;
   const idx = EFFORT_LEVELS.indexOf(effort);
+  const at = (i: number) => `${(i / last) * 100}%`;
 
   useEffect(() => {
     if (!open) return;
@@ -26,26 +30,41 @@ export default function EffortPicker({ effort, onChange }: Props) {
       }}>
         <Icon name="bulb" size={14} />
         <span>{EFFORT_PARAMS[effort].label}</span>
-        <Icon name="chevron" size={12} />
       </button>
       {open && (
         <div style={{
-          position: "absolute", bottom: "calc(100% + 8px)", left: 0, width: 260,
-          background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 12,
-          padding: "14px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.5)", zIndex: 50,
+          position: "absolute", bottom: "calc(100% + 8px)", right: 0, width: 300,
+          background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: 14,
+          padding: "14px 16px 12px", boxShadow: "0 12px 40px rgba(0,0,0,0.5)", zIndex: 50,
         }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 12 }}>
-            <span style={{ color: "var(--text-dim)" }}>intelligence</span>
-            <span style={{ color: "var(--accent)", fontWeight: 600 }}>{EFFORT_PARAMS[effort].label}</span>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 14, fontSize: 14 }}>
+            <span style={{ color: "var(--text-dim)" }}>Effort</span>
+            <span style={{ fontWeight: 600 }}>{EFFORT_PARAMS[effort].label}</span>
           </div>
-          <input
-            type="range" min={0} max={EFFORT_LEVELS.length - 1} step={1} value={idx}
-            onChange={e => onChange(EFFORT_LEVELS[+e.target.value])}
-            style={{ width: "100%", accentColor: "var(--accent)", cursor: "pointer" }}
-          />
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-dim)", marginTop: 4 }}>
-            {EFFORT_LEVELS.map(l => (
-              <span key={l} style={{ color: l === effort ? "var(--text)" : "var(--text-dim)" }}>{EFFORT_PARAMS[l].short}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-dim)", marginBottom: 8 }}>
+            <span>Faster</span><span>Smarter</span>
+          </div>
+          <div style={{ position: "relative", height: 30, margin: "0 4px" }}>
+            <div style={{ position: "absolute", inset: 0, background: "var(--bg2)", borderRadius: 10 }} />
+            {EFFORT_LEVELS.map((l, i) => (
+              <div key={l} style={{ position: "absolute", left: at(i), top: 13, width: 3, height: 3, marginLeft: -1, borderRadius: "50%", background: "var(--text-dim)" }} />
+            ))}
+            <div style={{
+              position: "absolute", left: at(idx), top: 0, width: 18, height: 30, marginLeft: -9, borderRadius: 9,
+              background: "var(--text)", boxShadow: "0 1px 6px rgba(0,0,0,0.5)", pointerEvents: "none",
+            }} />
+            <input
+              type="range" min={0} max={last} step={1} value={idx} aria-label="effort"
+              onChange={e => onChange(EFFORT_LEVELS[+e.target.value])}
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, margin: 0, cursor: "pointer" }}
+            />
+          </div>
+          <div style={{ position: "relative", height: 34, margin: "8px 4px 0" }}>
+            {EFFORT_LEVELS.map((l, i) => (
+              <div key={l} style={{ position: "absolute", left: at(i), transform: "translateX(-50%)", textAlign: "center", fontSize: 11, whiteSpace: "nowrap", color: l === effort ? "var(--text)" : "var(--text-dim)" }}>
+                <div>{EFFORT_PARAMS[l].short}</div>
+                {l === RECOMMENDED && <div style={{ fontSize: 10, color: "var(--text-dim)" }}>Recommended</div>}
+              </div>
             ))}
           </div>
         </div>
