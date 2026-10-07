@@ -153,6 +153,14 @@ def _get_json(url: str):
 
 _MOE = re.compile(r"moe|mixtral|\d+x\d+b|[-_ ]a\d+(\.\d+)?b\b", re.I)
 _UNCENSORED = re.compile(r"abliterat|uncensor", re.I)
+_VISION = re.compile(r"image-text-to-text|multimodal|vision|llava|pixtral|mllama|minicpm-?v|smolvlm|internvl|paligemma|moondream|molmo|idefics|[-_ .]vl(?![a-z])", re.I)
+_THINK = re.compile(r"think|reason|[-_ /]r1(?![a-z0-9])|qwq|magistral|gpt-oss", re.I)
+
+
+def badges(repo_id: str, tags: list[str], pipeline: str = "") -> dict:
+    """Guess what a repo offers from its name and Hub tags (a hint, not a guarantee)."""
+    text = f"{repo_id} {' '.join(tags)} {pipeline}"
+    return {"vision": bool(_VISION.search(text)), "thinking": bool(_THINK.search(text)), "moe": bool(_MOE.search(text))}
 
 
 def _query(q: str, limit: int) -> list[dict]:
@@ -174,7 +182,8 @@ def search(query: str, moe: bool = False, uncensored: bool = False, limit: int =
         if m["id"] in seen or (moe and not _MOE.search(text)) or (uncensored and not _UNCENSORED.search(text)):
             continue
         seen.add(m["id"])
-        out.append({"id": m["id"], "downloads": m.get("downloads", 0), "likes": m.get("likes", 0)})
+        out.append({"id": m["id"], "downloads": m.get("downloads", 0), "likes": m.get("likes", 0),
+                    **badges(m["id"], m.get("tags") or [], m.get("pipeline_tag") or "")})
     return out[:limit]
 
 

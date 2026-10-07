@@ -13,6 +13,22 @@ const FIT_COLOR: Record<HubFile["fit"], string> = {
 const gb = (b: number) => `${(b / 1024 ** 3).toFixed(1)} GB`;
 const mb = (b: number) => `${(b / 1024 ** 2).toFixed(1)} MB/s`;
 
+const BADGES: { key: "vision" | "thinking" | "moe"; label: string; color: string; hint: string }[] = [
+  { key: "vision", label: "Vision", color: "#3b82f6", hint: "Reads images (guessed from the name and tags)" },
+  { key: "thinking", label: "Thinking", color: "#a855f7", hint: "Reasons step by step before answering (guessed from the name and tags)" },
+  { key: "moe", label: "MoE", color: "#f97316", hint: "Mixture of experts: only part of the model runs per token" },
+];
+
+function Badges({ r }: { r: HubRepo }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 4, marginLeft: 8, verticalAlign: "middle" }}>
+      {BADGES.filter(b => r[b.key]).map(b => (
+        <span key={b.key} title={b.hint} style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 9, color: b.color, border: `1px solid ${b.color}`, background: `${b.color}1f`, whiteSpace: "nowrap" }}>{b.label}</span>
+      ))}
+    </span>
+  );
+}
+
 export default function ModelHub({ installed }: { installed: string[] }) {
   const [hw, setHw] = useState<HubHardware | null>(null);
   const [query, setQuery] = useState("");
@@ -78,7 +94,7 @@ export default function ModelHub({ installed }: { installed: string[] }) {
 
       {!repo && repos.map(r => (
         <div key={r.id} style={{ ...card, cursor: "pointer", display: "flex", alignItems: "center" }} onClick={() => void open(r.id)}>
-          <span style={{ flex: 1, fontSize: 13, wordBreak: "break-all" }}>{r.id}</span>
+          <span style={{ flex: 1, fontSize: 13, wordBreak: "break-all" }}>{r.id}<Badges r={r} /></span>
           <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{r.downloads.toLocaleString()} downloads</span>
         </div>
       ))}

@@ -181,7 +181,7 @@ export async function* streamChat(opts: {
 }
 
 export interface HubHardware { cpu: string; cpu_cores: number; gpu: string; vram_total_gb: number; vram_free_gb: number; ram_total_gb: number; ram_free_gb: number }
-export interface HubRepo { id: string; downloads: number; likes: number }
+export interface HubRepo { id: string; downloads: number; likes: number; vision?: boolean; thinking?: boolean; moe?: boolean }
 export interface HubFile { file: string; size: number; quant: string; moe: boolean; active_ratio: number; fit: "gpu" | "split" | "cpu" | "too_big"; tps: number; vram_gb: number; ram_gb: number }
 export interface HubJob { id: string; repo: string; file: string; name: string; state: string; done: number; total: number; speed: number; error: string }
 

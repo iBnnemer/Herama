@@ -56,7 +56,7 @@ def test_files_filters_and_sorts(monkeypatch):
 
 def test_search_route(monkeypatch):
     monkeypatch.setattr(hub, "_get_json", lambda url: [{"id": "a/b", "downloads": 5, "likes": 1}])
-    assert client.get("/api/hub/search?q=x").json() == [{"id": "a/b", "downloads": 5, "likes": 1}]
+    assert client.get("/api/hub/search?q=x").json() == [{"id": "a/b", "downloads": 5, "likes": 1, "vision": False, "thinking": False, "moe": False}]
 
 
 def test_download_writes_file(tmp_path, monkeypatch):
@@ -131,3 +131,13 @@ def test_moe_split_matches_measurement():
     hw = {**HW, "cpu_bandwidth": 80.0, "vram_total_gb": 12.0, "ram_total_gb": 32.0}
     e = hub.estimate(int(19.7 * GB), hw, 3 / 35)
     assert e["fit"] == "split" and 40 < e["tps"] < 62
+
+
+def test_badges_from_name_and_tags():
+    b = hub.badges("DavidAU/Llama-3.2-8X3B-MOE-Dark-Champion-Reasoning-GGUF", [])
+    assert b == {"vision": False, "thinking": True, "moe": True}
+    assert hub.badges("unsloth/Qwen2.5-VL-7B-Instruct-GGUF", [])["vision"]
+    assert hub.badges("x/some-model-GGUF", ["gguf"], "image-text-to-text")["vision"]
+    assert hub.badges("unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF", [])["thinking"]
+    plain = hub.badges("bartowski/Llama-3.1-8B-Instruct-GGUF", ["gguf"], "text-generation")
+    assert plain == {"vision": False, "thinking": False, "moe": False}
