@@ -151,16 +151,20 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
 def auto(model: Path, ctx: int, learn: bool = True) -> dict:
     """Settings chosen without user input: more experts/layers on the CPU first, then a compressed KV cache,
     and finally a lower context when nothing else makes it fit."""
-    best = None
+    best, fitting = None, []
     for kv in KV_TYPES:
         p = propose(model, ctx, learn=learn, kv_type=kv)
         if not p["fits"]:
             continue
-        best = best or p
-        heavy = p["cpu_moe"] > 0.6 * p["layers"] if p["moe"] else p["ngl"] < 0.6 * p["layers"]
+        fitting.append(p)
+        # MoE: moving expert layers to the CPU is cheap, so allow up to 60%. Dense: every layer stays on the GPU
+        # and the KV cache is compressed first, because offloading dense layers costs much more speed.
+        heavy = p["cpu_moe"] > 0.6 * p["layers"] if p["moe"] else p["ngl"] < p["layers"]
         if not heavy:
             best = p
             break
+    if best is None and fitting:  # everything fits only with heavy offload: take the least offload
+        best = max(fitting, key=lambda p: (p["ngl"] - p["cpu_moe"], p["kv_type"] == "f16"))
     adjusted: list[str] = []
     if best is None:  # even the smallest cache with the most offload does not fit: find the largest context that does
         lo, hi, found = 512, ctx, None

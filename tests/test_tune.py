@@ -117,3 +117,13 @@ def test_auto_small_dense_model_needs_no_adjustment(tmp_path, monkeypatch):
     f = _model(tmp_path, monkeypatch, 7, DENSE)
     a = tune.auto(f, 4096)
     assert a["kv_type"] == "f16" and a["ngl"] == a["layers"] and a["adjusted"] == []
+
+
+def test_auto_dense_compresses_kv_before_offloading_layers(tmp_path, monkeypatch):
+    # 7.7 GB dense model on a 12 GB card; KV grows with context but all layers must stay on the GPU
+    f = _model(tmp_path, monkeypatch, 7.7, {**DENSE, "block_count": 48, "context_length": 1_000_000}, "dense-Q4_K_M.gguf")
+    small = tune.auto(f, 8192)
+    assert small["kv_type"] == "f16" and small["ngl"] == 48
+    mid = tune.auto(f, 32768)
+    assert mid["kv_type"] != "f16" and mid["ngl"] == 48
+    assert tune.auto(f, 65536)["kv_type"] == "q4_0"
