@@ -484,27 +484,23 @@ class BgTasksPanel(ctk.CTkFrame):
 
 class RightSidebar(ctk.CTkFrame):
     """
-    Adaptive Layout Container — toggle buttons inject/remove panels.
-    Multiple active panels share vertical space via grid row weights
-    so each panel gets an exactly equal share with no overlap.
+    Passive container for the right column.
+    Owns the toggle-button bar and the panel-container frame.
+    All state logic lives in HeramaApp; buttons call app.toggle_panel(name).
     """
 
     PANEL_NAMES = ("Plan", "Files", "Tasks")
 
-    def __init__(self, master, **kw):
+    def __init__(self, master, on_toggle: Callable[[str], None], **kw):
         super().__init__(master, width=350, fg_color=SIDEBAR_BG,
                          corner_radius=0, **kw)
         self.pack_propagate(False)
         self.grid_propagate(False)
 
-        self._active: dict[str, bool] = {n: False for n in self.PANEL_NAMES}
-        self._panels: dict[str, ctk.CTkFrame] = {}
-        self._btns:   dict[str, ctk.CTkButton] = {}
+        self._btns: dict[str, ctk.CTkButton] = {}
+        self._on_toggle = on_toggle
 
-        self._build()
-
-    def _build(self):
-        # Row 0 = toggle bar (fixed height); row 1 = panel container (grows)
+        # Row 0 = button bar (fixed); row 1 = panel container (expands)
         self.grid_rowconfigure(0, weight=0)
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -519,74 +515,41 @@ class RightSidebar(ctk.CTkFrame):
                 fg_color=CARD_BG, hover_color=BORDER,
                 text_color=TEXT_DIM, corner_radius=6,
                 height=26, width=80,
-                command=lambda n=name: self._toggle(n),
+                command=lambda n=name: self._on_toggle(n),
             )
             btn.pack(side="left", padx=3)
             self._btns[name] = btn
 
-        # ── container — uses grid internally for proportional rows ──
-        self._container = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0)
-        self._container.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 4))
-        self._container.grid_columnconfigure(0, weight=1)
+        # ── panel container — HeramaApp grids panels here ──
+        self.container = ctk.CTkFrame(self, fg_color=SIDEBAR_BG, corner_radius=0)
+        self.container.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 4))
+        self.container.grid_columnconfigure(0, weight=1)
 
-        # create all panels (not placed yet)
-        self._panels["Plan"]  = PlanPanel(self._container)
-        self._panels["Files"] = FilesPanel(self._container)
-        self._panels["Tasks"] = BgTasksPanel(self._container)
-
-        # activate Plan by default
-        self._toggle("Plan")
-
-    def _toggle(self, name: str):
-        self._active[name] = not self._active[name]
-        self._relayout()
-
-    def _relayout(self):
-        """
-        Re-grid active panels with equal row weights so each occupies
-        an exactly proportional share of the available vertical space.
-        No overlaps possible: grid replaces geometry manager fully.
-        """
-        # remove all panels from grid
-        for panel in self._panels.values():
-            panel.grid_forget()
-
-        # reset all row weights on container
-        for i in range(len(self.PANEL_NAMES)):
-            self._container.grid_rowconfigure(i, weight=0)
-
-        active_names = [n for n in self.PANEL_NAMES if self._active[n]]
-        if not active_names:
-            self._active["Plan"] = True
-            active_names = ["Plan"]
-
-        # place each active panel in its own row with equal weight=1
-        for row_idx, name in enumerate(active_names):
-            self._container.grid_rowconfigure(row_idx, weight=1)
-            self._panels[name].grid(
-                row=row_idx, column=0, sticky="nsew", padx=0, pady=(0, 2)
-            )
-
-        # update button highlights
+    def update_buttons(self, active_panels: dict[str, bool]):
+        """Sync button highlight to the current active_panels state."""
         for name, btn in self._btns.items():
             btn.configure(
-                fg_color=ACCENT if self._active[name] else CARD_BG,
-                text_color=TEXT if self._active[name] else TEXT_DIM,
+                fg_color=ACCENT if active_panels.get(name) else CARD_BG,
+                text_color=TEXT if active_panels.get(name) else TEXT_DIM,
             )
-
-    # ── convenience properties ──
-    @property
-    def plan(self)  -> PlanPanel:    return self._panels["Plan"]   # type: ignore[return-value]
-    @property
-    def files(self) -> FilesPanel:   return self._panels["Files"]  # type: ignore[return-value]
-    @property
-    def tasks(self) -> BgTasksPanel: return self._panels["Tasks"]  # type: ignore[return-value]
 
 
 # ===========================================================================
 # Main application
 # ===========================================================================
 class HeramaApp(ctk.CTk):
+    """
+    Central application class.
+
+    Panel state is owned here:
+        self.active_panels = {"Plan": True, "Files": False, "Tasks": False}
+
+    All layout mutations go through one master method:
+        self.refresh_right_sidebar()
+    """
+
+    _PANEL_ORDER = ("Plan", "Files", "Tasks")
+
     def __init__(self):
         super().__init__()
         self.title("Herama  —  Local LLM Workspace")
@@ -596,35 +559,109 @@ class HeramaApp(ctk.CTk):
 
         self._history: list[dict] = []
 
+        # ── master panel state ──
+        self.active_panels: dict[str, bool] = {
+            "Plan":  True,
+            "Files": False,
+            "Tasks": False,
+        }
+
         self._build_layout()
         self.after(POLL_MS, self._tick)
 
+    # ------------------------------------------------------------------
     def _build_layout(self):
         self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=0)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_columnconfigure(2, weight=0)
+        self.grid_columnconfigure(0, weight=0)   # left sidebar — fixed
+        self.grid_columnconfigure(1, weight=1)   # center        — fluid
+        self.grid_columnconfigure(2, weight=0)   # right sidebar — fixed
 
-        self._left   = LeftSidebar(self, on_section=self._on_nav)
+        self._left = LeftSidebar(self, on_section=self._on_nav)
         self._left.grid(row=0, column=0, sticky="nsew")
 
         self._center = CenterPanel(self, on_send=self._on_send)
         self._center.grid(row=0, column=1, sticky="nsew")
 
-        self._right  = RightSidebar(self)
+        # right sidebar: pass the toggle callback
+        self._right = RightSidebar(self, on_toggle=self.toggle_panel)
         self._right.grid(row=0, column=2, sticky="nsew")
 
-        self._right.tasks.add_task("Herama workspace started", "done")
+        # build the three panel widgets inside the container (not placed yet)
+        self._panels: dict[str, ctk.CTkFrame] = {
+            "Plan":  PlanPanel(self._right.container),
+            "Files": FilesPanel(self._right.container),
+            "Tasks": BgTasksPanel(self._right.container),
+        }
+
+        # perform initial layout
+        self.refresh_right_sidebar()
+
+        # seed the task log
+        self._panels["Tasks"].add_task("Herama workspace started", "done")  # type: ignore[attr-defined]
+
+    # ------------------------------------------------------------------
+    def toggle_panel(self, name: str) -> None:
+        """
+        Flip the boolean for *name* in active_panels, then refresh.
+        Ensures at least one panel is always visible.
+        """
+        self.active_panels[name] = not self.active_panels[name]
+
+        # guard: if all panels are now False, re-enable the one just toggled off
+        if not any(self.active_panels.values()):
+            self.active_panels[name] = True
+
+        self.refresh_right_sidebar()
+
+    # ------------------------------------------------------------------
+    def refresh_right_sidebar(self) -> None:
+        """
+        Master layout refresh for the right sidebar.
+
+        Algorithm
+        ---------
+        1. grid_forget() every panel — clears the container completely.
+        2. Reset every row weight on the container to 0.
+        3. Collect the ordered list of active panel names.
+        4. For each active panel: configure its container row with weight=1
+           and grid() it into that row with sticky="nsew".
+           → 1 panel active  → occupies 100 % of the height (weight=1/1)
+           → 2 panels active → each 50 %                    (weight=1/2)
+           → 3 panels active → each 33 %                    (weight=1/3)
+        5. Sync toggle-button highlights to active_panels state.
+        """
+        container = self._right.container
+
+        # step 1 — remove all panels from the grid
+        for panel in self._panels.values():
+            panel.grid_forget()
+
+        # step 2 — zero out all row weights
+        for i in range(len(self._PANEL_ORDER)):
+            container.grid_rowconfigure(i, weight=0)
+
+        # step 3 — ordered list of currently active names
+        active_names = [n for n in self._PANEL_ORDER if self.active_panels.get(n)]
+
+        # step 4 — re-grid each active panel with equal weight
+        for row_idx, name in enumerate(active_names):
+            container.grid_rowconfigure(row_idx, weight=1)
+            self._panels[name].grid(
+                row=row_idx, column=0, sticky="nsew", padx=0, pady=(0, 2)
+            )
+
+        # step 5 — sync button highlights
+        self._right.update_buttons(self.active_panels)
 
     def _on_nav(self, section: str):
         if section.startswith("open_dir:"):
             path = Path(section.split(":", 1)[1])
-            self._right.files.load_directory(path)
-            self._right.tasks.add_task(f"Opened repo: {path.name}", "done")
+            self._panels["Files"].load_directory(path)
+            self._panels["Tasks"].add_task(f"Opened repo: {path.name}", "done")
         elif section == "new":
             self._center.add_message("assistant", "New session ready.")
         else:
-            self._right.tasks.add_task(f"Navigation: {section}", "done")
+            self._panels["Tasks"].add_task(f"Navigation: {section}", "done")
 
     def _tick(self):
         self._left.refresh()
@@ -641,7 +678,7 @@ class HeramaApp(ctk.CTk):
             return
 
         short = (text[:40] + "…") if len(text) > 40 else text
-        self._right.tasks.add_task(f"Chat → {short}", "running")
+        self._panels["Tasks"].add_task(f"Chat → {short}", "running")
 
         if not state.connected:
             self._center.add_message("assistant",
@@ -665,7 +702,7 @@ class HeramaApp(ctk.CTk):
         workspace = Path.home() / "herama_workspace"
         self._center.add_message("user", url)
         self._center.add_message("assistant", f"Cloning {url} …")
-        self._right.tasks.add_task(f"Clone: {url}", "running")
+        self._panels["Tasks"].add_task(f"Clone: {url}", "running")
 
         stream_lbl = self._center.start_stream()
 
@@ -677,13 +714,13 @@ class HeramaApp(ctk.CTk):
             if err:
                 self.after(0, lambda e=err: stream_lbl.configure(
                     text=f"Clone failed: {e[:120]}", text_color=ACCENT_RED))
-                self.after(0, lambda e=err: self._right.tasks.add_task(
+                self.after(0, lambda e=err: self._panels["Tasks"].add_task(
                     f"Clone error: {e[:60]}", "error"))
             else:
                 self.after(0, lambda p=path: stream_lbl.configure(
                     text=f"Cloned → {p}\n\nFiles loaded in the Files Explorer panel."))
-                self.after(0, lambda p=path: self._right.files.load_directory(p))
-                self.after(0, lambda p=path: self._right.tasks.add_task(
+                self.after(0, lambda p=path: self._panels["Files"].load_directory(p))
+                self.after(0, lambda p=path: self._panels["Tasks"].add_task(
                     f"Cloned: {p.name}", "done"))
 
         clone_repo_async(url, workspace, _progress, _done)
@@ -708,11 +745,11 @@ class HeramaApp(ctk.CTk):
                         break
             self._history.append({"role": "assistant", "content": buf})
             short = (buf[:40] + "…") if len(buf) > 40 else buf
-            self.after(0, lambda: self._right.tasks.add_task(f"Chat ← {short}", "done"))
+            self.after(0, lambda s=short: self._panels["Tasks"].add_task(f"Chat ← {s}", "done"))
         except Exception as exc:
             self.after(0, lambda e=str(exc): lbl.configure(text=f"Error: {e}",
                                                             text_color=ACCENT_RED))
-            self.after(0, lambda e=str(exc): self._right.tasks.add_task(
+            self.after(0, lambda e=str(exc): self._panels["Tasks"].add_task(
                 f"Chat error: {e[:50]}", "error"))
 
 
