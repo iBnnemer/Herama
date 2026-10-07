@@ -255,3 +255,10 @@ def test_ask_agent(tmp_path, monkeypatch):
     assert ok["ok"] and "found it" in ok["result"] and seen["model"] == "m1"
     assert not tools.run("ask_agent", {"agent": "default", "task": "x"}, agent="default")["ok"]
     assert "Researcher" in tools.run("list_agents", {}, agent="default")["result"]
+
+
+def test_schedule_tools_are_client_side():
+    names = {t["name"]: t for t in tools.listing()}
+    for n in ("schedule_task", "list_tasks", "cancel_task"):
+        assert names[n]["client"] and names[n]["group"] == "Schedule" and names[n]["kind"] == "memory"
+    assert not tools.run("schedule_task", {})["ok"]   # handled by the app, not the backend

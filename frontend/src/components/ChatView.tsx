@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Safety, Agent, Group, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
+import type { Safety, Agent, Group, Job, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune, loadTools, runTool } from "../api";
 import type { ChatMsg, ModelState, ToolCall, ToolInfo, ToolResult } from "../api";
@@ -15,6 +15,8 @@ interface Props {
   conv: Conversation;
   agent?: Agent;
   group?: Group;
+  jobs: Job[];
+  onJobsChange: (update: (jobs: Job[]) => Job[]) => void;
   project?: Project;
   projects: Project[];
   state: AppState;
@@ -40,7 +42,7 @@ const groupHint = (g: Group | undefined, agents: Agent[]) => {
   return `You lead the group "${g.name}". Your team: ${names || "(no members yet)"}. Split the user's request into sub-tasks, ask the right members with ask_agent (give each all the context it needs), then combine their answers into one reply for the user. Do simple things yourself.`;
 };
 
-const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory, Agents, Git or Utilities), call use_tools to switch it on. " +
+const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory, Agents, Git, Schedule or Utilities), call use_tools to switch it on. " +
   "Use tools when they help, and never claim you did something you did not do with a tool. " +
   "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
   "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets. " +
@@ -100,7 +102,7 @@ async function summarize(prev: string | undefined, old: Message[], model: string
 
 const PLAN_HINT = "Plan mode: you may only read, search and look things up. For anything that changes files or runs commands, describe a short numbered plan and do not claim to have changed anything.";
 
-export default function ChatView({ conv, agent, group, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onManageModels, modelState, onTps, taskApi }: Props) {
+export default function ChatView({ conv, agent, group, jobs, onJobsChange, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onManageModels, modelState, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -112,6 +114,32 @@ export default function ChatView({ conv, agent, group, project, projects, state,
     pendingRef.current = p;
     setPending(p);
   });
+  const jobsNow = useRef(jobs);
+  jobsNow.current = jobs;
+  const manageJobs = (name: string, args: Record<string, unknown>): ToolResult => {
+    if (name === "list_tasks") {
+      return { ok: true, result: jobsNow.current.map(j => `${j.name}: every ${j.everyMin} min${j.enabled ? "" : " (paused)"}`).join("\n") || "No scheduled tasks." };
+    }
+    if (name === "cancel_task") {
+      const want = String(args.name ?? "").trim().toLowerCase();
+      const hit = jobsNow.current.find(j => j.name.toLowerCase() === want || j.id === want);
+      if (!hit) return { ok: false, result: `No scheduled task named "${String(args.name ?? "")}". Use list_tasks.` };
+      jobsNow.current = jobsNow.current.filter(j => j.id !== hit.id);
+      onJobsChange(list => list.filter(j => j.id !== hit.id));
+      return { ok: true, result: `Cancelled "${hit.name}".` };
+    }
+    const nm = String(args.name ?? "").trim();
+    const prompt = String(args.prompt ?? "").trim();
+    const every = Math.round(Number(args.every_minutes));
+    if (!nm || !prompt) return { ok: false, result: "name and prompt are required." };
+    if (!Number.isFinite(every) || every < 2 || every > 10080) return { ok: false, result: "every_minutes must be between 2 and 10080." };
+    if (jobsNow.current.length >= 20) return { ok: false, result: "There are already 20 scheduled tasks; cancel one first." };
+    const runNow = args.run_now !== false;   // by default the first run happens within seconds
+    const job: Job = { id: rid(), name: nm.slice(0, 60), prompt, everyMin: every, enabled: true, createdAt: Date.now() - (runNow ? every * 60_000 : 0) };
+    jobsNow.current = [...jobsNow.current, job];
+    onJobsChange(list => [...list, job]);
+    return { ok: true, result: `Scheduled "${job.name}" every ${every} minutes${runNow ? ", first run starts now" : ""}. Results arrive in the Messaging inbox while the app is open.` };
+  };
   const grants = useRef({ read: [] as string[], write: [] as string[], computer: false });
   const model = agent?.model || state.activeModel;
   const ready = state.connected && !!model;
@@ -288,6 +316,8 @@ export default function ChatView({ conv, agent, group, project, projects, state,
             const names = all.filter(t => asked.includes(t.group) && allowedBySafety(t, state.safety)).map(t => t.name);
             result = asked.length ? { ok: true, result: `Switched on: ${asked.join(", ")}. Tools now available: ${names.join(", ") || "none in this mode"}.` }
               : { ok: false, result: `Unknown group. Choose from: ${TOOL_GROUPS.join(", ")}.` };
+          } else if (name === "schedule_task" || name === "list_tasks" || name === "cancel_task") {
+            result = manageJobs(name, args);
           } else if (name === "update_plan") {
             result = updatePlan(args.steps);
           } else {

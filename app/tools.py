@@ -894,10 +894,16 @@ def _system_info(a, ctx):
 CLIENT_TOOLS = [
     Tool("use_tools", "Utilities", "ui",
          "Switch on more tools when the task needs them. Only a few tools are active at first. Groups: Files (read, write, search files), Web (search, open pages), "
-         "Shell (run commands), Skills (saved programs), Memory (remember facts), Git (clone, status, commit, push), Agents (ask other agents for help), Utilities (time, calculator, computer info).",
-         {"groups": _arr({"type": "string", "enum": ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Utilities"]})}, ["groups"], lambda a, c: ""),
+         "Shell (run commands), Skills (saved programs), Memory (remember facts), Git (clone, status, commit, push), Schedule (repeating tasks), Agents (ask other agents for help), Utilities (time, calculator, computer info).",
+         {"groups": _arr({"type": "string", "enum": ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Schedule", "Utilities"]})}, ["groups"], lambda a, c: ""),
     Tool("ask_user", "Utilities", "ui", "Ask the user a question when you need a decision or missing detail, then stop and wait for the answer.",
          {"question": S}, ["question"], lambda a, c: ""),
+    Tool("schedule_task", "Schedule", "memory",
+         "Schedule a task that runs again and again while the app is open (for example 'search the news every 10 minutes'). "
+         "The prompt is run by an assistant that can search the web; the answer is delivered to the user's Messaging inbox. Give a short name and a complete, self-contained prompt.",
+         {"name": S, "prompt": S, "every_minutes": I, "run_now": B}, ["name", "prompt", "every_minutes"], lambda a, c: ""),
+    Tool("list_tasks", "Schedule", "memory", "List the scheduled tasks with how often each runs.", {}, [], lambda a, c: ""),
+    Tool("cancel_task", "Schedule", "memory", "Stop and remove a scheduled task by its name.", {"name": S}, ["name"], lambda a, c: ""),
     Tool("update_plan", "Utilities", "ui",
          "Show or update your step-by-step plan for a multi-step task. Send the full list every time; status is pending, doing or done.",
          {"steps": _arr({"type": "object", "properties": {"text": S, "status": {"type": "string", "enum": ["pending", "doing", "done"]}}, "required": ["text"]})},

@@ -42,3 +42,13 @@ test("paths are found in messages", () => {
   assert.deepEqual(extractPaths("use /help or and/or"), []);
   assert.deepEqual(extractPaths("C:/Users/me/a.txt"), ["C:/Users/me/a.txt"]);
 });
+
+test("scheduling words switch on the Schedule group", () => {
+  assert.ok(matchGroups("search the news every 10 minutes").includes("Schedule"));
+  assert.ok(matchGroups("remind me daily").includes("Schedule"));
+  // "search the news and its urgent items every 10 minutes", in Arabic
+  const ar = "قم بالبحث عن اخبار اليوم و عواجلها كل 10 دقائق";
+  const g = matchGroups(ar);
+  assert.ok(g.includes("Schedule") && g.includes("Web"));
+  assert.ok(!matchGroups("hello there").includes("Schedule"));
+});

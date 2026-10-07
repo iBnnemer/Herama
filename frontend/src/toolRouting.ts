@@ -1,6 +1,6 @@
 /** Decides which tool groups to switch on for a message, so the model never sees all tools at once. */
 
-export const TOOL_GROUPS = ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Utilities"] as const;
+export const TOOL_GROUPS = ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Schedule", "Utilities"] as const;
 export type ToolGroup = (typeof TOOL_GROUPS)[number];
 
 // Patterns run on normalized text: lower case, no Arabic diacritics, alef variants merged, ta marbuta and alef maqsura folded.
@@ -29,6 +29,10 @@ const PATTERNS: Record<ToolGroup, RegExp> = {
   Git: new RegExp([
     "\\b(git|github|commit|clone|push|pull request|branch|diff)\\b",
     "\u062c\u064a\u062a|\u0643\u0648\u0645\u064a\u062a|\u0645\u0633\u062a\u0648\u062f\u0639",
+  ].join("|"), "i"),
+  Schedule: new RegExp([
+    "\\b(schedul\\w*|every \\d+|each \\d+|every (minute|hour|day|morning|night|week)|remind\\w*|recurring|periodic\\w*|repeat\\w*|daily|hourly|cron)\\b",
+    "\u0643\u0644 \\d+|\u0643\u0644 (\u062f\u0642\u064a\u0642\u0647|\u0633\u0627\u0639\u0647|\u064a\u0648\u0645|\u0627\u0633\u0628\u0648\u0639|\u0635\u0628\u0627\u062d|\u0644\u064a\u0644\u0647)|\u0630\u0643\u0631\u0646\u064a|\u064a\u0648\u0645\u064a\u0627|\u0645\u062c\u062f\u0648\u0644|\u062c\u062f\u0648\u0644\u0647|\u062f\u0642\u0627\u0626\u0642|\u062f\u0648\u0631\u064a\u0627|\u0643\u0631\u0631",
   ].join("|"), "i"),
   Agents: new RegExp([
     "\\b(agents?|delegate|collaborat\\w*|teammates?|ask (the|another|other) )",

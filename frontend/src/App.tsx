@@ -17,6 +17,7 @@ import ProjectsPage from "./components/pages/ProjectsPage";
 import CapabilitiesPage from "./components/pages/CapabilitiesPage";
 import MessagingPage from "./components/pages/MessagingPage";
 import ArtifactsPage from "./components/pages/ArtifactsPage";
+import { runJobWithTools } from "./jobRunner";
 import JobsPage from "./components/pages/JobsPage";
 
 const POLL_MS = 4000;
@@ -228,10 +229,10 @@ export default function App() {
     let text = "";
     let failed = false;
     try {
-      for await (const piece of streamChat({
-        model: st.activeModel, messages: [{ role: "user", content: job.prompt }],
-        numCtx: st.contextLength, ...approvedTune(st, st.activeModel), temperature: ep.temperature, top_p: ep.top_p,
-      })) text += piece;
+      text = await runJobWithTools({
+        prompt: job.prompt, model: st.activeModel, numCtx: st.contextLength, tune: approvedTune(st, st.activeModel),
+        temperature: ep.temperature, top_p: ep.top_p,
+      });
     } catch (err) {
       failed = true;
       text += `${text ? "\n" : ""}[error] ${String(err)}`;
@@ -331,6 +332,8 @@ export default function App() {
             conv={activeConv}
             agent={activeAgent}
             group={activeGroup}
+            jobs={jobs}
+            onJobsChange={setJobs}
             project={activeProject}
             state={state}
             onConvUpdate={updateConv}

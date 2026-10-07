@@ -44,7 +44,7 @@ export default function CapabilitiesPage({ models, connected, engine, runtime, o
       {connected ? <ModelHub installed={models.map(m => m.name)} /> : <Empty text="Backend offline." />}
       <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "20px 0 4px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Agent tools</h2>
       <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 8 }}>Every agent has these, but only the groups your message needs are switched on (for example "search" turns on Web); the model can switch on another group itself. Ask mode confirms file changes and commands, Plan mode allows reading only, Off disables them.</div>
-      {["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Utilities"].map(g => {
+      {["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Schedule", "Utilities"].map(g => {
         const list = tools.filter(t => t.group === g);
         return list.length === 0 ? null : (
           <div key={g} style={{ marginBottom: 12 }}>
