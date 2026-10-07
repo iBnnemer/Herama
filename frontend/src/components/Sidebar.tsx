@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Agent, Conversation, Group, Mode, Project, View } from "../types";
+import type { ChatMsg } from "../api";
 import AgentModal from "./AgentModal";
 import GroupModal from "./GroupModal";
 import Icon from "./Icons";
@@ -30,6 +31,8 @@ interface Props {
   onOpenGroup: (g: Group) => void;
   onOpenAgent: (a: Agent) => void;
   onRefreshAgents: () => void;
+  models: { name: string }[];
+  assist: (messages: ChatMsg[], signal: AbortSignal) => AsyncGenerator<string>;
   unread: number;
   connected: boolean;
   engine: string;
@@ -206,6 +209,8 @@ export default function Sidebar(p: Props) {
       {editAgent !== null && (
         <AgentModal
           agent={editAgent === "new" ? undefined : editAgent}
+          models={p.models}
+          assist={p.assist}
           onClose={() => setEditAgent(null)}
           onSaved={() => { setEditAgent(null); p.onRefreshAgents(); }}
         />

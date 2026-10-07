@@ -61,6 +61,9 @@ export interface Agent {
   name: string;
   model: string;
   system_prompt: string;
+  soul?: string;          // SOUL.md
+  instructions?: string;  // AGENT.md
+  prompt?: string;        // the three combined, built by the backend
 }
 
 /** Agents working together: the lead receives the user's messages and delegates to the members. */

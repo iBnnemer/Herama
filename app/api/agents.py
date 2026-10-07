@@ -9,7 +9,7 @@ from app import config
 
 DEFAULT_ID = "default"
 DEFAULT_AGENT = {"id": DEFAULT_ID, "name": "Default agent", "model": "",
-                 "system_prompt": "You are a helpful assistant."}
+                 "system_prompt": "You are a helpful assistant.", "soul": "", "instructions": ""}
 
 router = APIRouter(prefix="/api/agents")
 _lock = threading.Lock()
@@ -17,14 +17,34 @@ _lock = threading.Lock()
 
 class AgentIn(BaseModel):
     name: str
-    model: str = ""
+    model: str = ""            # empty = use whichever model is selected
     system_prompt: str = ""
+    soul: str = ""             # SOUL.md: who the agent is (character, values, tone)
+    instructions: str = ""     # AGENT.md: how it works (duties, rules, procedures)
 
 
 class AgentPatch(BaseModel):
     name: str | None = None
     model: str | None = None
     system_prompt: str | None = None
+    soul: str | None = None
+    instructions: str | None = None
+
+
+def compose(ag: dict) -> str:
+    """The full system prompt: SOUL.md, then AGENT.md, then the free-form prompt."""
+    parts = []
+    if (ag.get("soul") or "").strip():
+        parts.append("# SOUL\n" + ag["soul"].strip())
+    if (ag.get("instructions") or "").strip():
+        parts.append("# AGENT\n" + ag["instructions"].strip())
+    if (ag.get("system_prompt") or "").strip():
+        parts.append(ag["system_prompt"].strip())
+    return "\n\n".join(parts)
+
+
+def _out(ag: dict) -> dict:
+    return {"soul": "", "instructions": "", **ag, "prompt": compose(ag)}
 
 
 def _file():
@@ -48,7 +68,7 @@ def _save(items: list[dict]) -> None:
 
 @router.get("")
 def list_agents():
-    return _load()
+    return [_out(a) for a in _load()]
 
 
 @router.post("")
@@ -60,7 +80,7 @@ def create(a: AgentIn):
         item = {"id": uuid.uuid4().hex[:8], **a.model_dump()}
         items.append(item)
         _save(items)
-    return item
+    return _out(item)
 
 
 @router.patch("/{agent_id}")
@@ -71,7 +91,7 @@ def update(agent_id: str, a: AgentPatch):
             if it["id"] == agent_id:
                 it.update({k: v for k, v in a.model_dump().items() if v is not None})
                 _save(items)
-                return it
+                return _out(it)
     raise HTTPException(404, "agent not found")
 
 

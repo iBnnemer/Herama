@@ -4,7 +4,7 @@ import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune, loadTools, loadEnvironment, runTool } from "../api";
 import type { ChatMsg, ModelState, ToolCall, ToolInfo, ToolResult } from "../api";
 import { TOOL_GROUPS, activeTools, extractPaths, matchGroups } from "../toolRouting";
-import { projectContext, projectFolders, rid, splitThink } from "../util";
+import { agentModel, projectContext, projectFolders, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import ApprovalCard from "./ApprovalCard";
 import type { Choice } from "./ApprovalCard";
@@ -149,7 +149,7 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
     return { ok: true, result: `Scheduled "${job.name}" every ${every} minutes${runNow ? ", first run starts now" : ""}. Results arrive in the Messaging inbox while the app is open.` };
   };
   const grants = useRef({ read: [] as string[], write: [] as string[], computer: false });
-  const model = agent?.model || state.activeModel;
+  const model = agentModel(agent?.model, state.models, state.activeModel);
   const ready = state.connected && !!model;
 
   const sendNow = useCallback(async ({ text, atts, truncateAt }: Queued): Promise<Outcome> => {
@@ -188,7 +188,7 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
     const knowledge = dirs.length && window.herama?.fsKnowledge
       ? await window.herama.fsKnowledge(dirs, Math.max(0, Math.floor(state.contextLength * 0.4 * 2.5) - instrLen)).catch(() => undefined)
       : undefined;
-    const baseSystem = [agent?.system_prompt, groupHint(group, state.agents), state.safety === "plan" ? PLAN_HINT : "", projectContext(project, knowledge)].filter(Boolean).join("\n\n");
+    const baseSystem = [agent?.prompt ?? agent?.system_prompt, groupHint(group, state.agents), state.safety === "plan" ? PLAN_HINT : "", projectContext(project, knowledge)].filter(Boolean).join("\n\n");
     const convo = base.filter(m => m.role !== "tool");
     let fitted = fitToContext(convo.slice(-HISTORY_LIMIT), state.contextLength, baseSystem.length);
     let summary = priorSummary?.text ?? "";

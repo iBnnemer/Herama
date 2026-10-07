@@ -251,6 +251,7 @@ def test_ask_agent(tmp_path, monkeypatch):
         yield "found it"
         yield {}
     monkeypatch.setattr(engine, "chat", fake)
+    monkeypatch.setattr(tools, "_local_model", lambda n: n == "m1")  # m1 is installed
     ok = tools.run("ask_agent", {"agent": "researcher", "task": "look up x"}, agent="default", model="main")
     assert ok["ok"] and "found it" in ok["result"] and seen["model"] == "m1"
     assert not tools.run("ask_agent", {"agent": "default", "task": "x"}, agent="default")["ok"]

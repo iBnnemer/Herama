@@ -328,6 +328,8 @@ export default function App() {
           onOpenGroup={openGroup}
           onOpenAgent={openAgent}
           onRefreshAgents={poll}
+          models={state.models}
+          assist={assist}
           unread={inbox.filter(i => !i.read).length}
           connected={state.connected}
           engine={state.engine}

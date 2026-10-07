@@ -43,6 +43,13 @@ export function splitThink(text: string): { think: string; answer: string; open:
   return { think: text.slice(7, end).trim(), answer: text.slice(end + 8).replace(/^\s+/, ""), open: false };
 }
 
+const bare = (n: string) => n.replace(/:latest$/, "");
+/** The model an agent should use: its own when that model still exists, otherwise whatever is selected. */
+export function agentModel(agentModelName: string | undefined, models: { name: string }[], fallback: string): string {
+  const m = agentModelName ? models.find(x => bare(x.name) === bare(agentModelName)) : undefined;
+  return m ? m.name : fallback;
+}
+
 export const projectFolders = (p?: Project): string[] => p?.folders ?? (p?.dir ? [p.dir] : []);
 
 /** System text for a project: instructions plus the knowledge scanned from its folders. */

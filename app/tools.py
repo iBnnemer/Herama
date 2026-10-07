@@ -797,10 +797,19 @@ def _find_agent(who: str, ctx) -> dict:
     raise ToolError(f"no agent named '{who}' that you can ask; call list_agents to see them")
 
 
+def _local_model(name: str) -> bool:
+    from app.engine import engine
+    try:
+        engine.path(name)
+        return True
+    except FileNotFoundError:
+        return False
+
+
 @tool("list_agents", "Agents", "read", "List the other agents you can ask for help, with what each one is for.")
 def _list_agents(a, ctx):
     rows = _team(ctx)
-    return "\n".join(f"{ag['name']} (id {ag['id']}): {(ag.get('system_prompt') or '')[:160]}" for ag in rows) or "There are no other agents."
+    return "\n".join(f"{ag['name']} (id {ag['id']}): {(ag.get('instructions') or ag.get('soul') or ag.get('system_prompt') or '')[:160].replace(chr(10), ' ')}" for ag in rows) or "There are no other agents."
 
 
 @tool("ask_agent", "Agents", "read",
@@ -816,17 +825,22 @@ def _ask_agent(a, ctx):
         raise ToolError("task is empty")
     if target["id"] == (ctx.agent or "default"):
         raise ToolError("you cannot ask yourself")
-    model = target.get("model") or ctx.model
+    from app import remote
+    from app.api.agents import compose
+    model = target.get("model") or ""
+    if not model or not (remote.is_remote(model) or _local_model(model)):  # unset or deleted: use what is available
+        model = ctx.model
     if not model:
-        raise ToolError("no model is set for that agent")
-    system = (target.get("system_prompt") or "You are a helpful assistant.").strip()
+        raise ToolError("no model is available for that agent")
+    system = compose(target) or "You are a helpful assistant."
     facts = memory.relevant(task, agent=target["id"])
     if facts:
         system += "\n\nKnown facts:\n" + "\n".join(f"- #{f['id']} {f['content']}" for f in facts)
     system += f"\n\nAnother agent ({ctx.agent or 'default'}) asked you for help. Answer the task directly and briefly."
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": task}]
     try:
-        gen = engine.chat(model, msgs, {"num_predict": 1500}, False)
+        ext = remote.find(model)
+        gen = remote.chat(ext, msgs, {"num_predict": 1500}, False) if ext else engine.chat(model, msgs, {"num_predict": 1500}, False)
         text = next(gen)
         list(gen)  # let the engine finish its bookkeeping
     except FileNotFoundError:
