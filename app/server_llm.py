@@ -59,13 +59,17 @@ def _free_port() -> int:
 
 class ServerLLM:
     def __init__(self, binary: Path, model: Path, n_ctx: int, mmproj: Path | None, log_path: Path, ngl: int | None = None,
-                 cpu_moe: int = 0, expert_used: tuple[str, int] | None = None):
+                 cpu_moe: int = 0, expert_used: tuple[str, int] | None = None, kv_type: str = "f16", threads: int = 0):
         self.port = _free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         cmd = [str(binary), "-m", str(model), "--host", "127.0.0.1", "--port", str(self.port),
                "-c", str(n_ctx), "--jinja"]
         if ngl is not None:  # explicit GPU layer count; otherwise llama-server picks one itself
             cmd += ["-ngl", str(ngl)]
+        if kv_type != "f16":  # compressed KV cache needs flash attention
+            cmd += ["-ctk", kv_type, "-ctv", kv_type, "-fa", "on"]
+        if threads:
+            cmd += ["-t", str(threads)]
         if cpu_moe:  # keep the experts of the first N layers in system RAM
             cmd += ["--n-cpu-moe", str(cpu_moe)]
         if expert_used:  # fewer active experts per token: faster, lower quality

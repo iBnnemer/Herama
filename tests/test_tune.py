@@ -99,3 +99,21 @@ def test_calibration_learns_from_measurements(tmp_path, monkeypatch):
     assert other["calibrated"] == "learned" and 0.4 < other["tps"] / tune.propose(f, 131072, learn=False)["tps"] < 0.6
     calib.record(f.stem, 65536, raw["ngl"], raw["cpu_moe"], 0, raw["tps"] / 2)
     assert calib.entries(f.stem)[0]["n"] == 2
+
+
+def test_auto_prefers_cpu_experts_then_kv_compression_then_context_cap(tmp_path, monkeypatch):
+    f = _model(tmp_path, monkeypatch, 17, {**MOE, "context_length": 1_000_000}, "Qwen3-30B-A3B-Q4_K_M.gguf")
+    short = tune.auto(f, 8192)
+    assert short["kv_type"] == "f16" and short["cpu_moe"] > 0 and not short["adjusted"][0].startswith("Context")
+    big = tune.auto(f, 98304)
+    assert big["kv_type"] != "f16" and big["fits"] and big["ctx"] == 98304
+    huge = tune.auto(f, 4_000_000)
+    assert huge["kv_type"] == "q4_0" and huge["ctx"] < 4_000_000 and huge["fits"]
+    assert any(a.startswith("Context limited") for a in huge["adjusted"])
+    assert huge["requested_ctx"] == 4_000_000
+
+
+def test_auto_small_dense_model_needs_no_adjustment(tmp_path, monkeypatch):
+    f = _model(tmp_path, monkeypatch, 7, DENSE)
+    a = tune.auto(f, 4096)
+    assert a["kv_type"] == "f16" and a["ngl"] == a["layers"] and a["adjusted"] == []

@@ -7,6 +7,8 @@ from app import calib, hub, resources
 GB = 1024 ** 3
 EXPERT_SHARE = 0.88       # share of a MoE file that is expert tensors
 EXPERT_READ_SHARE = 0.8   # share of the bytes read per token that comes from experts
+KV_SCALE = {"f16": 1.0, "q8_0": 0.53, "q4_0": 0.28}   # relative KV cache size per cache type
+KV_TYPES = tuple(KV_SCALE)
 RESERVE_GB = 1.2          # driver, display and compute buffers kept free in VRAM
 
 
@@ -62,7 +64,8 @@ def _learned_ratio(model: Path, ctx: int) -> tuple[float, int] | None:
     """Measured/estimated speed ratio for this model, interpolated over context length."""
     pts = []
     for e in calib.entries(model.stem):
-        raw = propose(model, e["ctx"], e["ngl"], e["cpu_moe"], e["top_k"] or None, learn=False)["tps"]
+        raw = propose(model, e["ctx"], e["ngl"], e["cpu_moe"], e["top_k"] or None, learn=False,
+                      kv_type=e.get("kv", "f16"))["tps"]
         if raw > 0:
             pts.append((math.log2(e["ctx"]), e["tps"] / raw))
     if not pts:
@@ -80,7 +83,7 @@ def _learned_ratio(model: Path, ctx: int) -> tuple[float, int] | None:
 
 
 def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None = None,
-            top_k: int | None = None, learn: bool = True) -> dict:
+            top_k: int | None = None, learn: bool = True, kv_type: str = "f16") -> dict:
     """Preliminary settings for `ctx`; pass ngl/cpu_moe to re-estimate user-edited values.
 
     With learn=True the speed is corrected by what this machine measured earlier for this model."""
@@ -91,7 +94,7 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
     experts = int(m.get("expert_count") or 0)
     moe = experts > 1
     size = model.stat().st_size / GB
-    kv = _kv_gb(m, ctx, layers, model.name)
+    kv = _kv_gb(m, ctx, layers, model.name) * KV_SCALE.get(kv_type, 1.0)
     vram_budget = max(hw["vram_total_gb"] - RESERVE_GB, 0.0)
     ram_budget = max(hw["ram_total_gb"] * 0.9 - 2.0, 0.0)
     used = int(m.get("expert_used_count") or 0)
@@ -131,15 +134,49 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
     learned = ""
     if learn:
         exact = next((e for e in calib.entries(model.stem) if e["ctx"] == ctx and e["ngl"] == min(use_ngl, layers)
-                      and e["cpu_moe"] == use_moe and e["top_k"] in (0, use_k)), None)
+                      and e["cpu_moe"] == use_moe and e["top_k"] in (0, use_k) and e.get("kv", "f16") == kv_type), None)
         if exact:
             tps, learned = exact["tps"], "measured"
         elif (lr := _learned_ratio(model, ctx)):
             tps, learned = round(tps * lr[0], 1), "learned"
     return {
-        "calibrated": learned, "layers": layers, "moe": moe, "experts": experts, "ctx": ctx, "ctx_train": ctx_train,
+        "calibrated": learned, "kv_type": kv_type, "layers": layers, "moe": moe, "experts": experts, "ctx": ctx, "ctx_train": ctx_train,
         "ngl": use_ngl, "cpu_moe": use_moe, "top_k": use_k, "default_top_k": default_k, "kv_gb": round(kv, 1), "vram_gb": round(vram, 1),
         "ram_gb": round(max(ram, 0.0), 1), "tps": tps, "size_gb": round(size, 1),
         "fits": vram <= vram_budget + 0.01 and ram <= ram_budget, "vram_budget_gb": round(vram_budget, 1),
         "ctx_over_training": ctx > ctx_train,
     }
+
+
+def auto(model: Path, ctx: int, learn: bool = True) -> dict:
+    """Settings chosen without user input: more experts/layers on the CPU first, then a compressed KV cache,
+    and finally a lower context when nothing else makes it fit."""
+    best = None
+    for kv in KV_TYPES:
+        p = propose(model, ctx, learn=learn, kv_type=kv)
+        if not p["fits"]:
+            continue
+        best = best or p
+        heavy = p["cpu_moe"] > 0.6 * p["layers"] if p["moe"] else p["ngl"] < 0.6 * p["layers"]
+        if not heavy:
+            best = p
+            break
+    adjusted: list[str] = []
+    if best is None:  # even the smallest cache with the most offload does not fit: find the largest context that does
+        lo, hi, found = 512, ctx, None
+        while lo <= hi:
+            mid = max(512, (lo + hi) // 2 // 256 * 256)
+            p = propose(model, mid, learn=False, kv_type="q4_0")
+            if p["fits"]:
+                found, lo = p, mid + 256
+            else:
+                hi = mid - 256
+        best = propose(model, found["ctx"] if found else 512, learn=learn, kv_type="q4_0")
+        adjusted.append(f"Context limited to {best['ctx']}: the most this PC can hold")
+    if best["kv_type"] != "f16":
+        adjusted.append(f"KV cache: f16 -> {best['kv_type']}")
+    if best["cpu_moe"]:
+        adjusted.append(f"Expert layers on CPU: {best['cpu_moe']} of {best['layers']}")
+    elif best["ngl"] < best["layers"]:
+        adjusted.append(f"GPU layers: {best['ngl']} of {best['layers']}")
+    return {**best, "adjusted": adjusted, "requested_ctx": ctx, "manual": False}

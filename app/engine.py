@@ -69,27 +69,45 @@ class Engine:
         return handler(clip_model_path=str(mm), verbose=False)
 
     def _start_server(self, binary: Path, p: Path, n_ctx: int, vision: bool, num_gpu=None, cpu_moe: int = 0,
-                      expert_used: int = 0):
+                      expert_used: int = 0, kv_type: str = "f16", threads: int = 0):
         mm = self._find_mmproj(p)
         if vision and mm is None:
             raise RuntimeError("image input needs the matching mmproj .gguf file next to the model")
         log_path = runtime.RUNTIME_DIR / "server.log"
         ngl = self._gpu_layers(p, n_ctx, num_gpu)
         self._last_ngl = ngl
-        log.info("llama-server: %s backend=%s ngl=%s cpu_moe=%s ctx=%d", p.name, runtime.current_backend(), ngl, cpu_moe, n_ctx)
+        log.info("llama-server: %s backend=%s ngl=%s cpu_moe=%s kv=%s ctx=%d", p.name, runtime.current_backend(), ngl,
+                 cpu_moe, kv_type, n_ctx)
+        override = self._expert_override(p, expert_used)
         try:
-            return ServerLLM(binary, p, n_ctx, mm, log_path, ngl, cpu_moe, self._expert_override(p, expert_used))
+            return ServerLLM(binary, p, n_ctx, mm, log_path, ngl, cpu_moe, override, kv_type, threads)
         except RuntimeError as e:
             log.warning("llama-server failed with ngl=%s: %s", ngl, str(e)[-300:])
         if ngl not in (None, 0):  # our layer count may be too high: let llama-server fit it itself
             try:
-                return ServerLLM(binary, p, n_ctx, mm, log_path, None, cpu_moe, self._expert_override(p, expert_used))
+                return ServerLLM(binary, p, n_ctx, mm, log_path, None, cpu_moe, override, kv_type, threads)
             except RuntimeError as e:
                 log.warning("llama-server failed with automatic layers: %s", str(e)[-300:])
         nxt = runtime.fallback()  # e.g. CUDA build cannot start -> Vulkan -> CPU
         if nxt is None:
             raise RuntimeError("llama-server could not start; see runtime/server.log")
         return ServerLLM(nxt, p, n_ctx, mm, log_path, None if runtime.current_backend() != "cpu" else 0)
+
+    @staticmethod
+    def _auto_plan(p: Path, n_ctx: int) -> dict | None:
+        """Automatic GPU/CPU layout for this model and context (see tune.auto), or None when unavailable."""
+        if runtime.current_backend() == "cpu":
+            return None
+        try:
+            from app import hub, tune
+            if not hub.hardware()["vram_total_gb"]:
+                return None
+            a = tune.auto(p, n_ctx, learn=False)
+            return {"ctx": a["ctx"], "ngl": 999 if a["ngl"] >= a["layers"] else a["ngl"],
+                    "cpu_moe": a["cpu_moe"], "kv": a["kv_type"]}
+        except Exception:
+            log.debug("automatic layout unavailable", exc_info=True)
+            return None
 
     @staticmethod
     def _expert_override(p: Path, k: int) -> tuple[str, int] | None:
@@ -124,20 +142,24 @@ class Engine:
             return None
 
     def load(self, name: str, num_ctx=None, num_gpu=None, keep_alive: int = _DEFAULT_KEEP, vision: bool = False,
-             cpu_moe: int = 0, expert_used: int = 0):
+             cpu_moe: int = 0, expert_used: int = 0, kv_type: str = "f16", threads: int = 0):
         p = self.path(name)
         binary = runtime.ensure_binary()
         use_server = binary is not None
-        key = (p, num_ctx, num_gpu, cpu_moe, expert_used, False if use_server else vision, use_server)
+        key = (p, num_ctx, num_gpu, cpu_moe, expert_used, kv_type, threads, False if use_server else vision, use_server)
         if self._key == key:
             self._reset_timer(keep_alive)
             return self._llm
         self.unload()
         if use_server:
             n_ctx = int(num_ctx or 4096)
-            self._llm = self._start_server(binary, p, n_ctx, vision, num_gpu, int(cpu_moe or 0), int(expert_used or 0))
-            self._settings = {"model": p.stem, "ctx": n_ctx, "ngl": self._last_ngl,
-                              "cpu_moe": int(cpu_moe or 0), "top_k": int(expert_used or 0)}
+            cpu_moe, kv_type = int(cpu_moe or 0), kv_type or "f16"
+            if num_gpu is None and (auto := self._auto_plan(p, n_ctx)):  # no manual layout: choose it automatically
+                n_ctx, num_gpu, cpu_moe, kv_type = auto["ctx"], auto["ngl"], auto["cpu_moe"], auto["kv"]
+            self._llm = self._start_server(binary, p, n_ctx, vision, num_gpu, cpu_moe, int(expert_used or 0),
+                                           kv_type, int(threads or 0))
+            self._settings = {"model": p.stem, "ctx": n_ctx, "ngl": self._last_ngl, "cpu_moe": cpu_moe,
+                              "top_k": int(expert_used or 0), "kv": kv_type}
             backend = runtime.current_backend()
             self.plan = resources.Plan(n_ctx, 0 if backend == "cpu" else -1, 0, 0)
         else:
@@ -201,8 +223,8 @@ class Engine:
         """Yields text chunks then final llama-cpp response dict."""
         with self._lock:
             keep = opts.get("keep_alive", _DEFAULT_KEEP)
-            llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, cpu_moe=opts.get("num_cpu_moe", 0),
-                            expert_used=opts.get("num_expert_used", 0))
+            llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, cpu_moe=opts.get("num_cpu_moe", 0), expert_used=opts.get("num_expert_used", 0),
+                            kv_type=opts.get("kv_type", "f16"), threads=opts.get("num_thread", 0))
             kw = self._kw(opts)
             if not stream:
                 r = llm(prompt, **kw)
@@ -220,8 +242,8 @@ class Engine:
         with self._lock:
             keep = opts.get("keep_alive", _DEFAULT_KEEP)
             llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, vision=vision,
-                            cpu_moe=opts.get("num_cpu_moe", 0),
-                            expert_used=opts.get("num_expert_used", 0))
+                            cpu_moe=opts.get("num_cpu_moe", 0), expert_used=opts.get("num_expert_used", 0),
+                            kv_type=opts.get("kv_type", "f16"), threads=opts.get("num_thread", 0))
             kw = self._kw(opts)
             if not stream:
                 r = llm.create_chat_completion(messages=messages, **kw)
@@ -250,7 +272,7 @@ class Engine:
         try:
             layers = int(resources.gguf_meta(self.path(st["model"])).get("block_count") or 0)
             calib.record(st["model"], st["ctx"], min(st["ngl"], layers) if layers else st["ngl"],
-                         st["cpu_moe"], st["top_k"], tokens / elapsed)
+                         st["cpu_moe"], st["top_k"], tokens / elapsed, st["kv"])
         except Exception:
             log.debug("calibration not recorded", exc_info=True)
 
