@@ -4,7 +4,7 @@ import type {
   View, Project, Job, InboxItem,
 } from "./types";
 import { EFFORT_PARAMS } from "./types";
-import { fetchHealth, fetchModels, fetchAgents, streamChat, retryRuntime } from "./api";
+import { fetchHealth, fetchModels, fetchAgents, streamChat, retryRuntime, approvedTune } from "./api";
 import { rid } from "./util";
 import { usePersistent } from "./hooks/usePersistent";
 import Sidebar from "./components/Sidebar";
@@ -41,7 +41,7 @@ export default function App() {
   const [view, setView] = useState<View>("chat");
   const [state, setState] = useState<AppState>({
     connected: false, engine: "", accelerated: null, runtime: null, tps: 0, models: [], agents: [],
-    activeModel: "", contextLength: 4096, effort: "medium",
+    activeModel: "", contextLength: 4096, tune: {}, effort: "medium",
   });
   const [conversations, setConversations] = usePersistent<Conversation[]>("herama.convs", [newConv()], reviveConvs);
   const [activeConvId, setActiveConvId] = useState<string>(() => conversations[0].id);
@@ -177,7 +177,7 @@ export default function App() {
     try {
       for await (const piece of streamChat({
         model: st.activeModel, messages: [{ role: "user", content: job.prompt }],
-        numCtx: st.contextLength, temperature: ep.temperature, top_p: ep.top_p,
+        numCtx: st.contextLength, ...approvedTune(st, st.activeModel), temperature: ep.temperature, top_p: ep.top_p,
       })) text += piece;
     } catch (err) {
       failed = true;
@@ -270,7 +270,11 @@ export default function App() {
             state={state}
             onConvUpdate={updateConv}
             onModelChange={m => setState(s => ({ ...s, activeModel: m }))}
-            onContextChange={n => setState(s => ({ ...s, contextLength: n }))}
+            onContextChange={(n, t) => setState(s => {
+              const tune = { ...s.tune };
+              if (t) tune[s.activeModel] = t; else delete tune[s.activeModel];
+              return { ...s, contextLength: n, tune };
+            })}
             onEffortChange={e => setState(s => ({ ...s, effort: e }))}
             onTps={t => setState(s => ({ ...s, tps: t }))}
             taskApi={taskApi}

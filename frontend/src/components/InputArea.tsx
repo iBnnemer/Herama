@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
-import type { Attachment, Effort, Model } from "../types";
+import type { Attachment, Effort, Model, Tune } from "../types";
 import { readAttachment } from "../util";
 import EffortPicker from "./EffortPicker";
 import SettingsModal from "./SettingsModal";
@@ -19,7 +19,7 @@ interface Props {
   onStop: () => void;
   onModelChange: (m: string) => void;
   onEffortChange: (e: Effort) => void;
-  onContextChange: (n: number) => void;
+  onContextChange: (n: number, tune?: Tune) => void;
   disabled: boolean;
   placeholder?: string;
 }
@@ -159,7 +159,7 @@ export default function InputArea(p: Props) {
       </div>
 
       {showSettings && (
-        <SettingsModal contextLength={p.contextLength} tps={p.tps} onApply={p.onContextChange} onClose={() => setShowSettings(false)} />
+        <SettingsModal model={p.activeModel} contextLength={p.contextLength} tps={p.tps} onApply={p.onContextChange} onClose={() => setShowSettings(false)} />
       )}
     </div>
   );

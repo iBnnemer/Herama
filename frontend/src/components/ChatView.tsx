@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Agent, Attachment, AppState, Conversation, Effort, Message, TaskApi } from "../types";
+import type { Agent, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
-import { streamChat } from "../api";
+import { streamChat, approvedTune } from "../api";
 import type { ChatMsg } from "../api";
 import { rid, splitThink } from "../util";
 import MessageList from "./MessageList";
@@ -13,7 +13,7 @@ interface Props {
   state: AppState;
   onConvUpdate: (id: string, patch: Partial<Conversation>) => void;
   onModelChange: (m: string) => void;
-  onContextChange: (n: number) => void;
+  onContextChange: (n: number, tune?: Tune) => void;
   onEffortChange: (e: Effort) => void;
   onTps: (t: number) => void;
   taskApi: TaskApi;
@@ -78,7 +78,7 @@ export default function ChatView({ conv, agent, state, onConvUpdate, onModelChan
 
     try {
       for await (const piece of streamChat({
-        model, messages, numCtx: state.contextLength, temperature: ep.temperature, top_p: ep.top_p, signal: ctrl.signal,
+        model, messages, numCtx: state.contextLength, ...approvedTune(state, model), temperature: ep.temperature, top_p: ep.top_p, signal: ctrl.signal,
       })) {
         full += piece;
         if (!tFirst) tFirst = performance.now();
@@ -103,7 +103,7 @@ export default function ChatView({ conv, agent, state, onConvUpdate, onModelChan
       show(full, false);
       setStreaming(false);
     }
-  }, [model, state.effort, state.contextLength, conv, agent, onConvUpdate, onTps, taskApi]);
+  }, [model, state.effort, state.contextLength, state.tune, conv, agent, onConvUpdate, onTps, taskApi]);
 
   const submit = (text: string, atts: Attachment[]) => {
     if (streaming) setQueue(q => [...q, { text, atts }]);

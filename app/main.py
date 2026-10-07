@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import config
-from app.api import agents, hub, memory, ollama, skills
+from app.api import agents, hub, memory, ollama, skills, tune
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,6 +67,7 @@ app.include_router(memory.router)
 app.include_router(skills.router)
 app.include_router(agents.router)
 app.include_router(hub.router)
+app.include_router(tune.router)
 
 
 @app.get("/api/runtime")

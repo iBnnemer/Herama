@@ -54,6 +54,8 @@ export interface Model {
   size?: number;
 }
 
+export interface Tune { ctx: number; numGpu: number; cpuMoe: number }
+
 export interface AppState {
   connected: boolean;
   engine: string;
@@ -64,6 +66,7 @@ export interface AppState {
   agents: Agent[];
   activeModel: string;
   contextLength: number;
+  tune: Record<string, Tune>;
   effort: Effort;
 }
 

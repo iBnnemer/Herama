@@ -8,7 +8,7 @@ import psutil
 from app import config
 
 _SCALAR = {0: "B", 1: "b", 2: "H", 3: "h", 4: "I", 5: "i", 6: "f", 7: "?", 10: "Q", 11: "q", 12: "d"}
-_WANT = ("block_count", "context_length", "embedding_length", "attention.head_count", "attention.head_count_kv")
+_WANT = ("block_count", "context_length", "embedding_length", "attention.head_count", "attention.head_count_kv", "expert_count")
 
 
 def _read_val(f, t):
