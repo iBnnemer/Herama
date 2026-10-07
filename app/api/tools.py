@@ -17,6 +17,12 @@ class RunReq(BaseModel):
     group: str = ""
 
 
+@router.get("/environment")
+def environment():
+    from app.tools_dev import environment_facts
+    return {"text": environment_facts()}
+
+
 @router.get("")
 def listing():
     return tools.listing()

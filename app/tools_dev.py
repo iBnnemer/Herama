@@ -31,6 +31,73 @@ def condense(text: str, head: int = 5, tail: int = 30, errors: int = 40) -> str:
     return "\n".join([*lines[:head], f"[... {cut} lines left out ...]", *hits, "[...]", *lines[-tail:]])
 
 
+# -- shells and the machine's own versions --------------------------------------
+
+def available_shells() -> list[str]:
+    """Shell names usable here, the preferred (default) one first."""
+    if os.name == "nt":
+        out = []
+        if shutil.which("pwsh"):
+            out.append("pwsh")
+        if shutil.which("powershell"):
+            out.append("powershell")
+        return out + ["cmd"]
+    return (["bash"] if shutil.which("bash") else []) + ["sh"]
+
+
+def shell_argv(command: str, shell: str = "") -> list[str]:
+    shells = available_shells()
+    shell = (shell or shells[0]).lower()
+    if shell == "powershell" and "powershell" not in shells and "pwsh" in shells:
+        shell = "pwsh"
+    if shell not in shells:
+        raise ToolError(f"shell '{shell}' is not available here; use one of: {', '.join(shells)}")
+    if shell in ("pwsh", "powershell"):
+        prefix = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'; "
+        return [shutil.which(shell) or shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", prefix + command]
+    if shell == "cmd":
+        return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", command]
+    return [shutil.which(shell) or shell, "-c", command]
+
+
+def _version(argv: list[str]) -> str:
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, errors="replace", timeout=6,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[0][:80] if (r.stdout or r.stderr) else ""
+    except (OSError, subprocess.SubprocessError, IndexError):
+        return ""
+
+
+_ENV_CACHE: str | None = None
+
+
+def environment_facts(refresh: bool = False) -> str:
+    """What this computer really has, so commands are written for these versions (computed once, then cached)."""
+    global _ENV_CACHE
+    if _ENV_CACHE is not None and not refresh:
+        return _ENV_CACHE
+    import platform
+    shells = available_shells()
+    lines = [f"Operating system: {platform.system()} {platform.release()} (version {platform.version()}), {platform.machine()}"]
+    lines.append(f"Shells you can choose in run_command (shell argument): {', '.join(shells)}. Default: {shells[0]}.")
+    if os.name == "nt":
+        for sh in ("pwsh", "powershell"):
+            if sh in shells:
+                v = _version([shutil.which(sh) or sh, "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"])
+                lines.append(f"{sh} version: {v or 'unknown'}" + (" (Windows PowerShell 5.1: no '&&' between commands, use ';'; no ternary or null-coalescing operators)" if v.startswith("5.") else ""))
+        lines.append("Paths use backslashes; the drive letters present: " + ", ".join(f"{c}:" for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.exists(f"{c}:\\")))
+    tools_seen = [("python", [sys.executable or "python", "--version"]), ("git", ["git", "--version"]), ("node", ["node", "--version"]), ("npm", ["npm", "--version"])]
+    for name, argv in tools_seen:
+        if argv[0] in (sys.executable, "python") or shutil.which(argv[0]):
+            v = _version(argv if os.name != "nt" or argv[0] != "npm" else [shutil.which("npm") or "npm", "--version"])
+            lines.append(f"{name}: {v or 'installed (version unknown)'}")
+        else:
+            lines.append(f"{name}: not installed")
+    _ENV_CACHE = "\n".join(lines)
+    return _ENV_CACHE
+
+
 # -- background processes -----------------------------------------------------
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -76,7 +143,7 @@ def _tail(p: dict, lines: int) -> str:
 
 @tool("start_process", "Shell", "exec",
       "Start a long-running command in the background (a dev server, a watcher) and return its id. Read its output later with process_output; stop it with stop_process.",
-      {"command": S, "folder": S}, ["command"])
+      {"command": S, "folder": S, "shell": S}, ["command"])
 def _start_process(a, ctx):
     running = [k for k, p in _PROCS.items() if p["proc"].poll() is None]
     if len(running) >= MAX_PROCS:
@@ -87,7 +154,7 @@ def _start_process(a, ctx):
     log.parent.mkdir(parents=True, exist_ok=True)
     fh = open(log, "wb")
     kw = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)} if os.name == "nt" else {"start_new_session": True}
-    proc = subprocess.Popen(a["command"], shell=True, cwd=cwd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **kw)
+    proc = subprocess.Popen(shell_argv(a["command"], a.get("shell", "")), cwd=cwd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **kw)
     _PROCS[pid] = {"proc": proc, "log": log, "command": a["command"], "started": time.time()}
     time.sleep(1.0)  # a command that fails at once should say so right away
     return f"Started process {pid} ({_state(_PROCS[pid])}).\n{_tail(_PROCS[pid], 20)}".strip()

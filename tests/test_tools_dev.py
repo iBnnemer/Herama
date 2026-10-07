@@ -74,3 +74,26 @@ def test_git_commit_flow_and_clone_guard(tmp_path):
     assert not bad["ok"] and "sensitive" in bad["result"]
     assert not tools.run("git_clone", {"url": "https://evil.example/x/y"}, d)["ok"]
     assert not tools.run("git_clone", {"url": "file:///etc"}, d)["ok"]
+
+
+def test_shell_argv_for_each_shell(monkeypatch):
+    monkeypatch.setattr(tools_dev, "available_shells", lambda: ["pwsh", "powershell", "cmd"])
+    monkeypatch.setattr(tools_dev.shutil, "which", lambda n: f"C:/bin/{n}.exe")
+    ps = tools_dev.shell_argv("Get-Date")
+    assert ps[0].endswith("pwsh.exe") and "-NoProfile" in ps and ps[-1].endswith("Get-Date") and "UTF8" in ps[-1]
+    assert tools_dev.shell_argv("dir", "cmd")[1:3] == ["/d", "/c"]
+    assert tools_dev.shell_argv("x", "powershell")[0].endswith("powershell.exe")
+    with pytest.raises(tools.ToolError):
+        tools_dev.shell_argv("ls", "bash")
+
+
+def test_run_command_with_shell_choice(tmp_path):
+    r = tools.run("run_command", {"command": "echo hello"}, ws(tmp_path))
+    assert r["ok"] and "hello" in r["result"]
+    bad = tools.run("run_command", {"command": "echo hi", "shell": "zsh-nope"}, ws(tmp_path))
+    assert not bad["ok"] and "not available" in bad["result"]
+
+
+def test_environment_facts_list_real_versions():
+    text = tools_dev.environment_facts(refresh=True)
+    assert "Operating system:" in text and "python:" in text and "Shells you can choose" in text

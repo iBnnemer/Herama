@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Safety, Agent, Group, Job, Project, Attachment, AppState, Conversation, Effort, Message, TaskApi, Tune } from "../types";
 import { EFFORT_PARAMS } from "../types";
-import { streamChat, approvedTune, loadTools, runTool } from "../api";
+import { streamChat, approvedTune, loadTools, loadEnvironment, runTool } from "../api";
 import type { ChatMsg, ModelState, ToolCall, ToolInfo, ToolResult } from "../api";
 import { TOOL_GROUPS, activeTools, extractPaths, matchGroups } from "../toolRouting";
 import { projectContext, projectFolders, rid, splitThink } from "../util";
@@ -243,6 +243,10 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
     if (all.some(t => allowedBySafety(t, state.safety))) {
       if (messages[0]?.role === "system") messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${TOOLS_HINT}` };
       else messages.unshift({ role: "system", content: TOOLS_HINT });
+      if (active.has("Shell") || active.has("Git")) {
+        const env = await loadEnvironment();
+        if (env) messages[0] = { ...messages[0], content: `${messages[0].content}\n\nThis computer (write commands for exactly these systems and versions, never for older ones):\n${env}` };
+      }
       if (mentioned.length) messages[0] = { ...messages[0], content: `${messages[0].content}\n\nThe user gave these paths (you can read them): ${mentioned.join("; ")}` };
     }
 

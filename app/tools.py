@@ -669,12 +669,16 @@ def _download_file(a, ctx):
 
 # ── shell ─────────────────────────────────────────────────────────────────────
 
-@tool("run_command", "Shell", "exec", "Run a shell command inside an allowed folder and return its output. Stops after `timeout` seconds (default 60).",
-      {"command": S, "folder": S, "timeout": I}, ["command"])
+@tool("run_command", "Shell", "exec",
+      "Run a command inside an allowed folder and return its output. Write it for this computer's own shell and tool versions (see the environment facts). "
+      "`shell` picks the shell (powershell, pwsh, cmd or bash; the default is shown in the environment facts). Stops after `timeout` seconds (default 60).",
+      {"command": S, "folder": S, "timeout": I, "shell": S}, ["command"])
 def _run_command(a, ctx):
+    from app.tools_dev import shell_argv
     cwd = safe(ctx, a.get("folder") or ".", write=True)
     try:
-        r = subprocess.run(a["command"], shell=True, cwd=cwd, capture_output=True, text=True, errors="replace",
+        r = subprocess.run(shell_argv(a["command"], a.get("shell", "")), cwd=cwd, capture_output=True, text=True, errors="replace",
+                           encoding="utf-8" if (a.get("shell") or "").lower() in ("pwsh", "powershell") else None,
                            timeout=max(1, min(int(a.get("timeout") or 60), 600)),
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:

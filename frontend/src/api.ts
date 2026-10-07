@@ -80,6 +80,13 @@ export function loadTools(): Promise<ToolInfo[]> {
   return toolCache;
 }
 
+let envCache: Promise<string> | null = null;
+/** Facts about this computer (operating system, shells, tool versions) so commands are written for the versions that are really installed. */
+export function loadEnvironment(): Promise<string> {
+  envCache ??= fetch(`${BASE}/api/tools/environment`).then(r => (r.ok ? r.json() : { text: "" })).then(d => String(d.text ?? "")).catch(() => { envCache = null; return ""; });
+  return envCache;
+}
+
 export interface ToolResult { ok: boolean; result: string; needs_access?: { folder: string; write: boolean } }
 
 export async function runTool(name: string, args: Record<string, unknown>, dirs: string[], readDirs: string[] = [], computer = false, agent = "", model = "", group = ""): Promise<ToolResult> {
