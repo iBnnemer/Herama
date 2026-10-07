@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import type { Model } from "../../types";
 import { BASE, fetchSkills, loadTools } from "../../api";
 import type { ToolInfo } from "../../api";
-import ModelHub from "./ModelHub";
 import { approvals, describeKey } from "../../approvals";
 import PageShell, { card, ghostBtn, Empty } from "./PageShell";
 
@@ -37,11 +36,6 @@ export default function CapabilitiesPage({ models, connected, engine, runtime, o
         </div>
         {runtime?.state !== "downloading" && <button style={ghostBtn} onClick={onRetry}>Download engine again</button>}
       </div>
-      <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "20px 0 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Models</h2>
-      {models.length === 0 && <Empty text="No models found. Put .gguf files in the models folder." />}
-      {models.map(m => <div key={m.name} style={card}>{m.name}</div>)}
-      <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "20px 0 8px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Get models from Hugging Face</h2>
-      {connected ? <ModelHub installed={models.map(m => m.name)} /> : <Empty text="Backend offline." />}
       <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "20px 0 4px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Agent tools</h2>
       <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 8 }}>Every agent has these, but only the groups your message needs are switched on (for example "search" turns on Web); the model can switch on another group itself. Ask mode confirms file changes and commands, Plan mode allows reading only, Off disables them.</div>
       {["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Git", "Schedule", "Utilities"].map(g => {

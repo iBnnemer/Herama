@@ -7,6 +7,7 @@ import type { ToolInfo } from "../../api";
 import { approvals, describeKey } from "../../approvals";
 import Icon from "../Icons";
 import { card, ghostBtn, Empty } from "./PageShell";
+import ModelHub from "./ModelHub";
 
 interface Props {
   state: AppState;
@@ -22,7 +23,7 @@ interface Props {
   onContext: (n: number) => void;
   onEffort: (e: Effort) => void;
   onSafety: (s: Safety) => void;
-  onManageModels: () => void;
+  target?: string;
 }
 
 interface Sub { id: string; label: string; keys?: string }
@@ -149,6 +150,7 @@ export default function SettingsPage(p: Props) {
   const [confirmClear, setConfirmClear] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   const { state } = p;
+  useEffect(() => { if (p.target) setSel(p.target); }, [p.target]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); search.current?.focus(); } };
@@ -233,9 +235,11 @@ export default function SettingsPage(p: Props) {
       case "providers/local":
         return (
           <>
-            {state.models.length === 0 && <Empty text="No models found. Put .gguf files in the models folder." />}
+            <div style={{ fontSize: 12, color: "var(--text-mid)", margin: "0 2px 6px" }}>Installed</div>
+            {state.models.length === 0 && <Empty text="No models found. Put .gguf files in the models folder or download one below." />}
             {state.models.map(m => <div key={m.name} style={card}>{m.name.replace(/:latest$/, "")}</div>)}
-            <button style={{ ...ghostBtn, marginTop: 8 }} onClick={p.onManageModels}>Get models from Hugging Face</button>
+            <div style={{ fontSize: 12, color: "var(--text-mid)", margin: "18px 2px 8px" }}>Search and download (Hugging Face)</div>
+            {state.connected ? <ModelHub installed={state.models.map(m => m.name)} /> : <Empty text="Backend offline." />}
           </>
         );
       case "sessions/retention":

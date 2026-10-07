@@ -160,6 +160,7 @@ export default function App() {
     setProjectDir(projectFolders(p)[0] ?? "");
   };
 
+  const [settingsTarget, setSettingsTarget] = useState<string | undefined>();
   const [creatingProject, setCreatingProject] = useState(false);
 
   const addProject = () => {
@@ -292,7 +293,7 @@ export default function App() {
           onModel={m => setState(s => ({ ...s, activeModel: m }))}
           onContext={n => setState(s => { const tune = { ...s.tune }; delete tune[s.activeModel]; return { ...s, contextLength: n, tune }; })}
           onEffort={e => setState(s => ({ ...s, effort: e }))} onSafety={v => setState(s => ({ ...s, safety: v }))}
-          onManageModels={() => setView("capabilities")} />;
+          target={settingsTarget} />;
       case "jobs":
         return <JobsPage jobs={jobs} onChange={setJobs} onRunNow={id => void runJob(id)} />;
       default:
@@ -366,7 +367,7 @@ export default function App() {
             onSafetyChange={v => setState(s => ({ ...s, safety: v }))}
             projects={projects}
             modelState={modelState}
-            onManageModels={() => setView("capabilities")}
+            onManageModels={() => { setSettingsTarget("providers/local"); setView("settings"); }}
             onTps={t => setState(s => ({ ...s, tps: t }))}
             taskApi={taskApi}
           />
