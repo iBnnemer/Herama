@@ -27,7 +27,7 @@ export default function SettingsModal({ model, contextLength, tps, onApply, onCl
     return i < 0 ? CTX_STEPS.length - 1 : i;
   });
   const [plan, setPlan] = useState<TunePlan | null>(null);
-  const [edit, setEdit] = useState<{ ngl?: number; cpuMoe?: number }>({});
+  const [edit, setEdit] = useState<{ ngl?: number; cpuMoe?: number; topK?: number }>({});
   const [error, setError] = useState("");
   const ctx = CTX_STEPS[idx];
 
@@ -37,7 +37,7 @@ export default function SettingsModal({ model, contextLength, tps, onApply, onCl
     if (!model) return;
     let live = true;
     const t = setTimeout(() => {
-      fetchTune(model, ctx, edit.ngl, edit.cpuMoe)
+      fetchTune(model, ctx, edit.ngl, edit.cpuMoe, edit.topK)
         .then(p => { if (live) { setPlan(p); setError(""); } })
         .catch(e => { if (live) { setPlan(null); setError(String(e.message ?? e)); } });
     }, 250);
@@ -45,7 +45,10 @@ export default function SettingsModal({ model, contextLength, tps, onApply, onCl
   }, [model, ctx, edit]);
 
   const apply = () => {
-    onApply(ctx, plan ? { ctx, numGpu: plan.ngl, cpuMoe: plan.cpu_moe } : undefined);
+    onApply(ctx, plan ? {
+      ctx, numGpu: plan.ngl, cpuMoe: plan.cpu_moe,
+      expertUsed: plan.default_top_k && plan.top_k !== plan.default_top_k ? plan.top_k : 0,
+    } : undefined);
     onClose();
   };
 
@@ -80,6 +83,15 @@ export default function SettingsModal({ model, contextLength, tps, onApply, onCl
               <input type="number" min={0} max={plan.layers} style={num} value={plan.cpu_moe}
                 onChange={e => setEdit(v => ({ ...v, cpuMoe: Math.max(0, Math.min(plan.layers, +e.target.value || 0)), ngl: v.ngl ?? plan.ngl }))} />
             </Row>
+          )}
+          {plan.moe && plan.default_top_k > 0 && (
+            <Row label="Active experts per token" hint={`model default ${plan.default_top_k}`}>
+              <input type="number" min={1} max={plan.experts} style={num} value={plan.top_k}
+                onChange={e => setEdit(v => ({ ...v, topK: Math.max(1, Math.min(plan.experts, +e.target.value || 1)), ngl: v.ngl ?? plan.ngl, cpuMoe: v.cpuMoe ?? plan.cpu_moe }))} />
+            </Row>
+          )}
+          {plan.moe && plan.top_k < plan.default_top_k && (
+            <div style={{ color: "var(--accent)", margin: "2px 0 4px" }}>Fewer active experts is faster but lowers answer quality.</div>
           )}
           <Row label="KV cache">{plan.kv_gb} GB</Row>
           <Row label="GPU memory" hint={`budget ${plan.vram_budget_gb} GB`}>{plan.vram_gb} GB</Row>

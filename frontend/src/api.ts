@@ -68,6 +68,7 @@ export async function* streamChat(opts: {
   numCtx: number;
   numGpu?: number;
   cpuMoe?: number;
+  expertUsed?: number;
   temperature: number;
   top_p: number;
   signal?: AbortSignal;
@@ -80,7 +81,7 @@ export async function* streamChat(opts: {
       model: opts.model,
       messages: opts.messages,
       stream: true,
-      options: { num_ctx: opts.numCtx, num_gpu: opts.numGpu, num_cpu_moe: opts.cpuMoe, temperature: opts.temperature, top_p: opts.top_p },
+      options: { num_ctx: opts.numCtx, num_gpu: opts.numGpu, num_cpu_moe: opts.cpuMoe, num_expert_used: opts.expertUsed, temperature: opts.temperature, top_p: opts.top_p },
     }),
   });
   if (!r.ok || !r.body) throw new Error(`backend error ${r.status}: ${(await r.text()).slice(0, 200)}`);
@@ -131,22 +132,23 @@ export const hubDownload = (repo: string, file: string, size: number) =>
 export const hubCancel = (id: string) => hubJson<{ ok: boolean }>(`/downloads/${id}`, { method: "DELETE" });
 
 export interface TunePlan {
-  layers: number; moe: boolean; experts: number; ctx: number; ctx_train: number; ngl: number; cpu_moe: number;
+  layers: number; moe: boolean; experts: number; ctx: number; ctx_train: number; ngl: number; cpu_moe: number; top_k: number; default_top_k: number;
   kv_gb: number; vram_gb: number; ram_gb: number; tps: number; size_gb: number; fits: boolean;
   vram_budget_gb: number; ctx_over_training: boolean;
 }
 
-export async function fetchTune(model: string, ctx: number, ngl?: number, cpuMoe?: number): Promise<TunePlan> {
+export async function fetchTune(model: string, ctx: number, ngl?: number, cpuMoe?: number, topK?: number): Promise<TunePlan> {
   const q = new URLSearchParams({ model, ctx: String(ctx) });
   if (ngl !== undefined) q.set("ngl", String(ngl));
   if (cpuMoe !== undefined) q.set("cpu_moe", String(cpuMoe));
+  if (topK !== undefined) q.set("top_k", String(topK));
   const r = await fetch(`${BASE}/api/tune?${q}`);
   if (!r.ok) throw new Error(`tune failed (${r.status})`);
   return r.json() as Promise<TunePlan>;
 }
 
 /** GPU layer / expert settings the user approved for this model at the current context, if any. */
-export function approvedTune(state: { activeModel: string; contextLength: number; tune: Record<string, { ctx: number; numGpu: number; cpuMoe: number }> }, model: string) {
+export function approvedTune(state: { activeModel: string; contextLength: number; tune: Record<string, { ctx: number; numGpu: number; cpuMoe: number; expertUsed: number }> }, model: string) {
   const t = state.tune[model];
-  return t && t.ctx === state.contextLength ? { numGpu: t.numGpu, cpuMoe: t.cpuMoe } : {};
+  return t && t.ctx === state.contextLength ? { numGpu: t.numGpu, cpuMoe: t.cpuMoe, expertUsed: t.expertUsed } : {};
 }

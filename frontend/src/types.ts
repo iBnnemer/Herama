@@ -54,7 +54,7 @@ export interface Model {
   size?: number;
 }
 
-export interface Tune { ctx: number; numGpu: number; cpuMoe: number }
+export interface Tune { ctx: number; numGpu: number; cpuMoe: number; expertUsed: number }
 
 export interface AppState {
   connected: boolean;

@@ -68,7 +68,8 @@ class Engine:
             raise RuntimeError(f"this llama-cpp-python build has no {family}")
         return handler(clip_model_path=str(mm), verbose=False)
 
-    def _start_server(self, binary: Path, p: Path, n_ctx: int, vision: bool, num_gpu=None, cpu_moe: int = 0):
+    def _start_server(self, binary: Path, p: Path, n_ctx: int, vision: bool, num_gpu=None, cpu_moe: int = 0,
+                      expert_used: int = 0):
         mm = self._find_mmproj(p)
         if vision and mm is None:
             raise RuntimeError("image input needs the matching mmproj .gguf file next to the model")
@@ -76,18 +77,28 @@ class Engine:
         ngl = self._gpu_layers(p, n_ctx, num_gpu)
         log.info("llama-server: %s backend=%s ngl=%s cpu_moe=%s ctx=%d", p.name, runtime.current_backend(), ngl, cpu_moe, n_ctx)
         try:
-            return ServerLLM(binary, p, n_ctx, mm, log_path, ngl, cpu_moe)
+            return ServerLLM(binary, p, n_ctx, mm, log_path, ngl, cpu_moe, self._expert_override(p, expert_used))
         except RuntimeError as e:
             log.warning("llama-server failed with ngl=%s: %s", ngl, str(e)[-300:])
         if ngl not in (None, 0):  # our layer count may be too high: let llama-server fit it itself
             try:
-                return ServerLLM(binary, p, n_ctx, mm, log_path, None, cpu_moe)
+                return ServerLLM(binary, p, n_ctx, mm, log_path, None, cpu_moe, self._expert_override(p, expert_used))
             except RuntimeError as e:
                 log.warning("llama-server failed with automatic layers: %s", str(e)[-300:])
         nxt = runtime.fallback()  # e.g. CUDA build cannot start -> Vulkan -> CPU
         if nxt is None:
             raise RuntimeError("llama-server could not start; see runtime/server.log")
         return ServerLLM(nxt, p, n_ctx, mm, log_path, None if runtime.current_backend() != "cpu" else 0)
+
+    @staticmethod
+    def _expert_override(p: Path, k: int) -> tuple[str, int] | None:
+        if not k:
+            return None
+        try:
+            arch = resources.gguf_meta(p).get("architecture")
+        except Exception:
+            return None
+        return (arch, int(k)) if arch else None
 
     @staticmethod
     def _gpu_layers(p: Path, n_ctx: int, num_gpu: int | None = None) -> int | None:
@@ -112,18 +123,18 @@ class Engine:
             return None
 
     def load(self, name: str, num_ctx=None, num_gpu=None, keep_alive: int = _DEFAULT_KEEP, vision: bool = False,
-             cpu_moe: int = 0):
+             cpu_moe: int = 0, expert_used: int = 0):
         p = self.path(name)
         binary = runtime.ensure_binary()
         use_server = binary is not None
-        key = (p, num_ctx, num_gpu, cpu_moe, False if use_server else vision, use_server)
+        key = (p, num_ctx, num_gpu, cpu_moe, expert_used, False if use_server else vision, use_server)
         if self._key == key:
             self._reset_timer(keep_alive)
             return self._llm
         self.unload()
         if use_server:
             n_ctx = int(num_ctx or 4096)
-            self._llm = self._start_server(binary, p, n_ctx, vision, num_gpu, int(cpu_moe or 0))
+            self._llm = self._start_server(binary, p, n_ctx, vision, num_gpu, int(cpu_moe or 0), int(expert_used or 0))
             backend = runtime.current_backend()
             self.plan = resources.Plan(n_ctx, 0 if backend == "cpu" else -1, 0, 0)
         else:
@@ -186,7 +197,8 @@ class Engine:
         """Yields text chunks then final llama-cpp response dict."""
         with self._lock:
             keep = opts.get("keep_alive", _DEFAULT_KEEP)
-            llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, cpu_moe=opts.get("num_cpu_moe", 0))
+            llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, cpu_moe=opts.get("num_cpu_moe", 0),
+                            expert_used=opts.get("num_expert_used", 0))
             kw = self._kw(opts)
             if not stream:
                 r = llm(prompt, **kw)
@@ -204,7 +216,8 @@ class Engine:
         with self._lock:
             keep = opts.get("keep_alive", _DEFAULT_KEEP)
             llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, vision=vision,
-                            cpu_moe=opts.get("num_cpu_moe", 0))
+                            cpu_moe=opts.get("num_cpu_moe", 0),
+                            expert_used=opts.get("num_expert_used", 0))
             kw = self._kw(opts)
             if not stream:
                 r = llm.create_chat_completion(messages=messages, **kw)

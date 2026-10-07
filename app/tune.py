@@ -10,20 +10,31 @@ EXPERT_READ_SHARE = 0.8   # share of the bytes read per token that comes from ex
 RESERVE_GB = 1.2          # driver, display and compute buffers kept free in VRAM
 
 
-def _kv_gb(m: dict, ctx: int, layers: int) -> float:
+def _kv_gb(m: dict, ctx: int, layers: int, name: str = "") -> float:
+    """f16 KV cache size. Sliding-window models (Gemma) keep only a short window on most layers."""
     emb = int(m.get("embedding_length") or 4096)
     heads = int(m.get("attention.head_count") or 32)
     kv_heads = m.get("attention.head_count_kv")
     kv_heads = int(kv_heads) if isinstance(kv_heads, (int, float)) and kv_heads > 0 else heads
-    return 2 * layers * (emb * kv_heads // heads) * 2 * ctx / GB  # K and V in f16
+    kl, vl = m.get("attention.key_length"), m.get("attention.value_length")
+    per_tok = (int(kl) + int(vl) if kl and vl else 2 * (emb // heads)) * kv_heads * 2  # bytes per token per layer
+    window = m.get("attention.sliding_window")
+    pattern = m.get("attention.sliding_window_pattern")
+    if not isinstance(window, int) or window <= 0:
+        window, pattern = (1024, 6) if "gemma" in name.lower() else (0, None)
+    if window and isinstance(pattern, int) and pattern > 1:
+        glob = layers // pattern or 1
+        return per_tok * (glob * ctx + (layers - glob) * min(ctx, window)) / GB
+    return per_tok * layers * ctx / GB
 
 
 def _speed(size: float, ratio: float, moe: bool, layers: int, ngl: int, cpu_moe: int,
-           hw: dict, quant_factor: float) -> float:
+           hw: dict, quant_factor: float, k_scale: float = 1.0) -> float:
     g = min(1.0, ngl / layers)
     active = size * ratio / quant_factor
-    expert = active * EXPERT_READ_SHARE if moe else 0.0
-    other = active - expert
+    expert = active * EXPERT_READ_SHARE * k_scale if moe else 0.0
+    other = active * (1 - EXPERT_READ_SHARE) if moe else active
+    active = expert + other
     expert_gpu = max(0.0, g - cpu_moe / layers) if moe else 0.0
     gpu_read = other * g + expert * expert_gpu
     cpu_read = active - gpu_read
@@ -35,7 +46,8 @@ def _speed(size: float, ratio: float, moe: bool, layers: int, ngl: int, cpu_moe:
     return round(1 / sec, 1) if sec > 0 else 0.0
 
 
-def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None = None) -> dict:
+def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None = None,
+            top_k: int | None = None) -> dict:
     """Preliminary settings for `ctx`; pass ngl/cpu_moe to re-estimate user-edited values."""
     hw = hub.hardware()
     m = resources.gguf_meta(model)
@@ -44,7 +56,7 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
     experts = int(m.get("expert_count") or 0)
     moe = experts > 1
     size = model.stat().st_size / GB
-    kv = _kv_gb(m, ctx, layers)
+    kv = _kv_gb(m, ctx, layers, model.name)
     vram_budget = max(hw["vram_total_gb"] - RESERVE_GB, 0.0)
     ram_budget = max(hw["ram_total_gb"] * 0.9 - 2.0, 0.0)
     ratio = (hub.moe_active_ratio(model.name) or 0.2) if moe else 1.0
@@ -69,11 +81,14 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
     gpu_experts = max(0.0, g - use_moe / layers) if moe else 0.0
     vram = size * (1 - ef) * g + size * ef * gpu_experts + kv * g
     ram = size + kv - vram
+    default_k = int(m.get("expert_used_count") or 0) if moe else 0
+    use_k = max(1, min(experts, top_k)) if (moe and top_k and default_k) else default_k
+    k_scale = use_k / default_k if default_k else 1.0
     q = hub._QUANT.search(model.name)
-    tps = _speed(size, ratio, moe, layers, use_ngl, use_moe, hw, hub.quant_speed_factor(q.group(1) if q else ""))
+    tps = _speed(size, ratio, moe, layers, use_ngl, use_moe, hw, hub.quant_speed_factor(q.group(1) if q else ""), k_scale)
     return {
         "layers": layers, "moe": moe, "experts": experts, "ctx": ctx, "ctx_train": ctx_train,
-        "ngl": use_ngl, "cpu_moe": use_moe, "kv_gb": round(kv, 1), "vram_gb": round(vram, 1),
+        "ngl": use_ngl, "cpu_moe": use_moe, "top_k": use_k, "default_top_k": default_k, "kv_gb": round(kv, 1), "vram_gb": round(vram, 1),
         "ram_gb": round(max(ram, 0.0), 1), "tps": tps, "size_gb": round(size, 1),
         "fits": vram <= vram_budget + 0.01 and ram <= ram_budget, "vram_budget_gb": round(vram_budget, 1),
         "ctx_over_training": ctx > ctx_train,

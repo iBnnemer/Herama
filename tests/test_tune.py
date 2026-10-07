@@ -56,3 +56,19 @@ def test_user_override_is_reestimated(tmp_path, monkeypatch):
     base = tune.propose(f, 4096)
     more = tune.propose(f, 4096, cpu_moe=base["cpu_moe"] + 10)
     assert more["cpu_moe"] == base["cpu_moe"] + 10 and more["vram_gb"] < base["vram_gb"] and more["tps"] < base["tps"]
+
+
+def test_sliding_window_model_has_small_kv(tmp_path, monkeypatch):
+    gemma = {**DENSE, "block_count": 48, "context_length": 131072, "attention.head_count_kv": 8,
+             "attention.sliding_window": 1024, "attention.sliding_window_pattern": 6}
+    f = _model(tmp_path, monkeypatch, 7, gemma, "gemma-12b-Q4_K_M.gguf")
+    sw = tune.propose(f, 65536)
+    full = tune.propose(_model(tmp_path, monkeypatch, 7, {**DENSE, "block_count": 48}, "plain-Q4_K_M.gguf"), 65536)
+    assert sw["kv_gb"] < full["kv_gb"] / 4 and sw["ngl"] == 48
+
+
+def test_fewer_active_experts_is_faster(tmp_path, monkeypatch):
+    f = _model(tmp_path, monkeypatch, 17, {**MOE, "expert_used_count": 8}, "Qwen3-30B-A3B-Q4_K_M.gguf")
+    base = tune.propose(f, 4096)
+    fast = tune.propose(f, 4096, top_k=4)
+    assert base["top_k"] == 8 and fast["top_k"] == 4 and fast["tps"] > base["tps"]
