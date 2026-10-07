@@ -163,7 +163,7 @@ def generate(r: GenReq):
 
 def _inject_memory(messages: list[dict], query: str) -> list[dict]:
     """Prepend a system message with recalled facts if any match."""
-    facts = memory.search(query)
+    facts = memory.relevant(query)
     if not facts:
         return messages
     block = "Known facts:\n" + "\n".join(f"- #{f['id']} {f['content']}" for f in facts)

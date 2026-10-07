@@ -110,6 +110,7 @@ export async function* streamChat(opts: {
       messages: opts.messages,
       tools: opts.tools ?? [],
       stream: true,
+      memory: true,
       options: { num_ctx: opts.numCtx, num_gpu: opts.numGpu, num_cpu_moe: opts.cpuMoe, num_expert_used: opts.expertUsed, kv_type: opts.kvType, num_thread: opts.threads, temperature: opts.temperature, top_p: opts.top_p },
     }),
   });

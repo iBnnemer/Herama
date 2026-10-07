@@ -42,3 +42,38 @@ def test_log_turn_auto_extract(mem):
                  auto_extract=True)
     rows = mem.recent()
     assert any(r["kind"] == "auto" for r in rows)
+
+
+def test_arabic_search_and_relevant(tmp_path):
+    from app.memory.store import Memory
+    m = Memory(tmp_path / "ar.db")
+    m.add("المستخدم يحب القهوة في الصباح")
+    m.add("fact about something unrelated here")
+    assert m.search("القهوه")  # ta-marbuta / ha merge
+    assert m.search("والقهوة")  # prefix stripped
+    ids = [f["id"] for f in m.relevant("قهوة", k=1, recent=5)]
+    assert len(ids) == len(set(ids)) == 2
+
+
+def test_migration_from_old_schema(tmp_path):
+    import sqlite3
+    from app.memory.store import Memory
+    p = tmp_path / "old.db"
+    c = sqlite3.connect(p)
+    c.executescript("CREATE TABLE facts(id INTEGER PRIMARY KEY, kind TEXT, content TEXT, tags TEXT, ts REAL);"
+                    "INSERT INTO facts(content,tags) VALUES('Paris is the capital','x');")
+    c.commit(); c.close()
+    assert Memory(p).search("Paris")
+
+
+def test_mirror_union(tmp_path):
+    from app.memory.store import Memory
+
+    class Fake:
+        def __init__(self): self.saved = []
+        def remember(self, t): self.saved.append(t)
+        def recall(self, q, k): return ["semantic only match text here"]
+    f = Fake()
+    m = Memory(tmp_path / "m.db", mirror=f)
+    m.add("semantic only match text here")
+    assert f.saved and m.search("zzzz")[0]["content"].startswith("semantic")
