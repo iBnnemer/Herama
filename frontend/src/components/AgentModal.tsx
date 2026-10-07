@@ -21,11 +21,11 @@ const lbl: React.CSSProperties = { fontSize: 11, color: "var(--text-dim)" };
 const bare = (n: string) => n.replace(/:latest$/, "");
 
 type Tab = "general" | "soul" | "agent";
-const TABS: { id: Tab; label: string }[] = [{ id: "general", label: "General" }, { id: "soul", label: "SOUL.md" }, { id: "agent", label: "AGENT.md" }];
+const TABS: { id: Tab; label: string }[] = [{ id: "general", label: "General" }, { id: "soul", label: "SOUL" }, { id: "agent", label: "AGENT" }];
 
 const FILE_HELP: Record<"soul" | "agent", { name: string; about: string; seed: string }> = {
-  soul: { name: "SOUL.md", about: "Who this agent is: character, values, tone and how it speaks.", seed: "# Soul\n\n- Character: \n- Values: \n- Tone: \n" },
-  agent: { name: "AGENT.md", about: "How this agent works: its duties, rules and step-by-step procedures.", seed: "# Agent\n\n## Role\n\n## Rules\n\n## Procedure\n" },
+  soul: { name: "SOUL", about: "Who this agent is: character, values, tone and how it speaks.", seed: "Character: \nValues: \nTone: \n" },
+  agent: { name: "AGENT", about: "How this agent works: its duties, rules and step-by-step procedures.", seed: "Role: \nRules: \nProcedure: \n" },
 };
 
 export default function AgentModal({ agent, models, assist, onClose, onSaved }: Props) {
@@ -71,8 +71,8 @@ export default function AgentModal({ agent, models, assist, onClose, onSaved }: 
     setBusy(true); setError("");
     let out = "";
     try {
-      const sys = `You edit the file ${help.name} of an AI agent named "${name || "agent"}". ${help.about} Apply the user's request to the current content and reply with the complete new file in Markdown and nothing else (no explanations, no code fences). Keep the language of the current content unless asked otherwise.`;
-      const user = `Current ${help.name}:\n"""\n${cur || help.seed}\n"""\n\nRequest: ${request}`;
+      const sys = `You edit the ${help.name} text of an AI agent named "${name || "agent"}". ${help.about} Apply the user's request to the current content and reply with the complete new text and nothing else (no explanations, no code fences). Keep the language of the current content unless asked otherwise.`;
+      const user = `Current ${help.name} text:\n"""\n${cur || help.seed}\n"""\n\nRequest: ${request}`;
       for await (const piece of assist([{ role: "system", content: sys }, { role: "user", content: user }], c.signal)) out += piece;
       let text = splitThink(out).answer.trim();
       text = text.replace(/^```(?:markdown|md)?\s*\n/, "").replace(/\n```$/, "").trim();
@@ -92,11 +92,11 @@ export default function AgentModal({ agent, models, assist, onClose, onSaved }: 
     return (
       <>
         <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 8 }}>{help.about} Saved with the agent and added to every conversation it has.</div>
-        <textarea style={{ ...inp, minHeight: 190, resize: "vertical", fontFamily: "var(--mono)", fontSize: 12.5, marginBottom: 8 }} value={value}
+        <textarea style={{ ...inp, minHeight: 190, resize: "vertical", fontSize: 13, marginBottom: 8 }} value={value}
           onChange={e => set(e.target.value)} placeholder={help.seed} spellCheck={false} />
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <input style={{ ...inp, marginBottom: 0, flex: 1 }} value={ask} onChange={e => setAsk(e.target.value)} disabled={busy}
-            placeholder="Ask the model to edit this file (empty = improve it)" onKeyDown={e => { if (e.key === "Enter" && !busy) void improve(); }} />
+            placeholder="Ask the model to edit this text (empty = improve it)" onKeyDown={e => { if (e.key === "Enter" && !busy) void improve(); }} />
           {busy
             ? <button onClick={() => abort.current?.abort()} style={{ padding: "7px 14px", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13, color: "var(--text-mid)" }}>Stop</button>
             : <button onClick={() => void improve()} style={{ padding: "7px 14px", border: "1px solid var(--accent)", borderRadius: 8, fontSize: 13, color: "var(--accent)", whiteSpace: "nowrap" }}>Edit with model</button>}
