@@ -219,8 +219,9 @@ function AssistantChat(p: { assist: Props["assist"]; system: () => string; tag: 
         {busy && <div style={{ fontSize: 13, whiteSpace: "pre-wrap", color: "var(--text-mid)" }}>{show({ role: "assistant", content: live }) || "..."}</div>}
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-        <input style={input} value={text} placeholder="Reply to the assistant..." onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") send(); }} />
+        <textarea style={{ ...input, resize: "none", maxHeight: 140 }} rows={Math.min(5, text.split("\n").length)} value={text}
+          placeholder="Reply to the assistant... (Enter to send, Shift+Enter for a new line)" onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }} />
         {busy
           ? <button style={ghostBtn} onClick={() => ctrl.current?.abort()}>Stop</button>
           : <button style={primaryBtn} disabled={!text.trim()} onClick={send}>Send</button>}
