@@ -300,6 +300,7 @@ export default function App() {
             onEffortChange={e => setState(s => ({ ...s, effort: e }))}
             onSafetyChange={v => setState(s => ({ ...s, safety: v }))}
             projects={projects}
+            onManageModels={() => setView("capabilities")}
             onTps={t => setState(s => ({ ...s, tps: t }))}
             taskApi={taskApi}
           />

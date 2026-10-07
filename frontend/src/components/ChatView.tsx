@@ -18,6 +18,7 @@ interface Props {
   onContextChange: (n: number, tune?: Tune) => void;
   onEffortChange: (e: Effort) => void;
   onSafetyChange: (s: Safety) => void;
+  onManageModels: () => void;
   onTps: (t: number) => void;
   taskApi: TaskApi;
 }
@@ -44,7 +45,7 @@ function fitToContext(msgs: Message[], ctx: number, reserved = 0): Message[] {
 
 const PLAN_HINT = "Plan mode: when a request needs actions on the user's machine, describe a short numbered plan and do not claim to have run anything.";
 
-export default function ChatView({ conv, agent, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onTps, taskApi }: Props) {
+export default function ChatView({ conv, agent, project, projects, state, onConvUpdate, onModelChange, onContextChange, onEffortChange, onSafetyChange, onManageModels, onTps, taskApi }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<Queued[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -164,6 +165,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
         onStop={stop}
         onModelChange={onModelChange}
         onEffortChange={onEffortChange}
+        onManageModels={onManageModels}
         safety={state.safety}
         onSafetyChange={onSafetyChange}
         projects={projects}

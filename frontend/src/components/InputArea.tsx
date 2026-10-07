@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
 import type { Agent, Attachment, Effort, Model, Project, Safety, Tune } from "../types";
 import Dropdown from "./Dropdown";
+import ModelPicker from "./ModelPicker";
 import { readAttachment } from "../util";
 import EffortPicker from "./EffortPicker";
 import SettingsModal from "./SettingsModal";
@@ -20,6 +21,7 @@ interface Props {
   onStop: () => void;
   onModelChange: (m: string) => void;
   onEffortChange: (e: Effort) => void;
+  onManageModels: () => void;
   safety: Safety;
   onSafetyChange: (s: Safety) => void;
   projects: Project[];
@@ -104,8 +106,7 @@ export default function InputArea(p: Props) {
       )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginBottom: 6 }}>
-        <Dropdown align="right" title="model" label={p.activeModel ? shortName(p.activeModel) : "Choose a model"} value={p.activeModel}
-          onPick={p.onModelChange} items={p.models.map(m => ({ id: m.name, label: shortName(m.name) }))} />
+        <ModelPicker models={p.models} active={p.activeModel} contextLength={p.contextLength} onPick={p.onModelChange} onManage={p.onManageModels} />
         <button onClick={() => setShowSettings(true)}
           title={`context and generation settings (ctx ${p.contextLength >= 1024 ? `${Math.round(p.contextLength / 1024)}K` : p.contextLength})`}
           style={{ ...chip, display: "flex", padding: 6 }}><Icon name="gear" size={16} /></button>
