@@ -19,6 +19,17 @@ def _norm(name: str) -> str:
 log = logging.getLogger("herama")
 
 
+def _default_draft() -> str:
+    """Draft model from HERAMA_DRAFT_MODEL, else the first line of draft_model.txt in the project folder."""
+    v = os.environ.get("HERAMA_DRAFT_MODEL", "").strip()
+    if v:
+        return v
+    try:
+        return (config.ROOT / "draft_model.txt").read_text("utf-8").strip().splitlines()[0].strip()
+    except (OSError, IndexError):
+        return ""
+
+
 class Engine:
     def __init__(self):
         self._lock = threading.Lock()
@@ -258,7 +269,7 @@ class Engine:
                 llm = self.load(name, opts.get("num_ctx"), opts.get("num_gpu"), keep_alive=keep, vision=vision,
                                 cpu_moe=opts.get("num_cpu_moe", 0), expert_used=opts.get("num_expert_used", 0),
                                 kv_type=opts.get("kv_type", "f16"), threads=opts.get("num_thread", 0),
-                                draft_model=opts.get("draft_model") or os.environ.get("HERAMA_DRAFT_MODEL", ""))
+                                draft_model=opts.get("draft_model") or _default_draft())
                 kw = self._kw(opts)
                 monitor.set_state("reading")
                 if not stream:
