@@ -10,21 +10,22 @@ class Fact(BaseModel):
     content: str
     kind: str = "fact"
     tags: str = ""
+    agent: str = ""   # empty = shared by every agent
 
 
 @router.post("")
 def add(f: Fact):
-    return {"id": memory.add(f.content, f.kind, f.tags)}
+    return {"id": memory.add(f.content, f.kind, f.tags, f.agent)}
 
 
 @router.get("")
-def recent(k: int = 20):
-    return memory.recent(k)
+def recent(k: int = 20, agent: str | None = None):
+    return memory.recent(k, agent)
 
 
 @router.get("/search")
-def search(q: str, k: int = 5):
-    return memory.search(q, k)
+def search(q: str, k: int = 5, agent: str | None = None):
+    return memory.search(q, k, agent)
 
 
 @router.delete("/{fid}")

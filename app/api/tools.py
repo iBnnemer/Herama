@@ -12,6 +12,8 @@ class RunReq(BaseModel):
     dirs: list[str] = []
     read_dirs: list[str] = []
     computer: bool = False
+    agent: str = ""
+    model: str = ""
 
 
 @router.get("")
@@ -21,4 +23,4 @@ def listing():
 
 @router.post("/run")
 def run(r: RunReq):
-    return tools.run(r.name, r.arguments, r.dirs, r.read_dirs, r.computer)
+    return tools.run(r.name, r.arguments, r.dirs, r.read_dirs, r.computer, r.agent, r.model)

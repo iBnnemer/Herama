@@ -65,11 +65,11 @@ export function loadTools(): Promise<ToolInfo[]> {
 
 export interface ToolResult { ok: boolean; result: string; needs_access?: { folder: string; write: boolean } }
 
-export async function runTool(name: string, args: Record<string, unknown>, dirs: string[], readDirs: string[] = [], computer = false): Promise<ToolResult> {
+export async function runTool(name: string, args: Record<string, unknown>, dirs: string[], readDirs: string[] = [], computer = false, agent = "", model = ""): Promise<ToolResult> {
   try {
     const r = await fetch(`${BASE}/api/tools/run`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, arguments: args, dirs, read_dirs: readDirs, computer }),
+      body: JSON.stringify({ name, arguments: args, dirs, read_dirs: readDirs, computer, agent, model }),
     });
     return r.ok ? await r.json() as ToolResult : { ok: false, result: `tool request failed (${r.status})` };
   } catch (e) {
@@ -99,6 +99,7 @@ export async function* streamChat(opts: {
   top_p: number;
   signal?: AbortSignal;
   tools?: unknown[];
+  agent?: string;
   onToolCalls?: (calls: ToolCall[]) => void;
 }): AsyncGenerator<string> {
   const r = await fetch(`${BASE}/api/chat`, {
@@ -111,6 +112,7 @@ export async function* streamChat(opts: {
       tools: opts.tools ?? [],
       stream: true,
       memory: true,
+      agent: opts.agent ?? "",
       options: { num_ctx: opts.numCtx, num_gpu: opts.numGpu, num_cpu_moe: opts.cpuMoe, num_expert_used: opts.expertUsed, kv_type: opts.kvType, num_thread: opts.threads, temperature: opts.temperature, top_p: opts.top_p },
     }),
   });

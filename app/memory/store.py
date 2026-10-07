@@ -11,9 +11,9 @@ _SENT = re.compile(r"(?<=[.!])\s+")
 _MIN_FACT = 30  # chars; shorter sentences rarely carry standalone facts
 
 _AR_DIAC = re.compile("[\u064b-\u065f\u0670\u0640]")
-_AR_MAP = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ة": "ه", "ى": "ي"})
+_AR_MAP = str.maketrans({"\u0623": "\u0627", "\u0625": "\u0627", "\u0622": "\u0627", "\u0629": "\u0647", "\u0649": "\u064a"})
 _WORD = re.compile(r"\w+", re.UNICODE)
-_PREFIXES = ("وال", "فال", "بال", "لل", "كال", "ال", "و", "ف", "ب", "ل", "ك")
+_PREFIXES = ("\u0648\u0627\u0644", "\u0641\u0627\u0644", "\u0628\u0627\u0644", "\u0644\u0644", "\u0643\u0627\u0644", "\u0627\u0644", "\u0648", "\u0641", "\u0628", "\u0644", "\u0643")
 
 
 def norm(text: str) -> str:
@@ -33,7 +33,7 @@ def words(text: str) -> list[str]:
 
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS facts(id INTEGER PRIMARY KEY, kind TEXT, content TEXT, tags TEXT, ts REAL, norm TEXT);
+CREATE TABLE IF NOT EXISTS facts(id INTEGER PRIMARY KEY, kind TEXT, content TEXT, tags TEXT, ts REAL, norm TEXT, agent TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS turns(id INTEGER PRIMARY KEY, model TEXT, prompt TEXT, response TEXT, ts REAL);
 """
 
@@ -67,6 +67,9 @@ class Memory:
                 self._db.execute("UPDATE facts SET norm=? WHERE id=?",
                                  (" ".join(words(f"{r['content']} {r['tags'] or ''}")), r["id"]))
             self._db.commit()
+        if "agent" not in cols:  # facts of an older layout belong to everyone (shared)
+            self._db.execute("ALTER TABLE facts ADD COLUMN agent TEXT NOT NULL DEFAULT ''")
+            self._db.commit()
         self._db.executescript(_FTS)
         if "norm" not in cols:
             self._db.execute("INSERT INTO facts_fts(facts_fts) VALUES('rebuild')")
@@ -76,39 +79,51 @@ class Memory:
         with self._lock, self._db:
             return self._db.execute(sql, args).fetchall()
 
-    def add(self, content: str, kind="fact", tags="") -> int:
+    def add(self, content: str, kind="fact", tags="", agent="") -> int:
         with self._lock, self._db:
-            fid = self._db.execute("INSERT INTO facts(kind,content,tags,ts,norm) VALUES(?,?,?,?,?)",
-                                   (kind, content, tags, time.time(), " ".join(words(f"{content} {tags}")))).lastrowid
+            fid = self._db.execute("INSERT INTO facts(kind,content,tags,ts,norm,agent) VALUES(?,?,?,?,?,?)",
+                                   (kind, content, tags, time.time(), " ".join(words(f"{content} {tags}")), agent or "")).lastrowid
         if self.mirror:
             self.mirror.remember(content)
         return fid
 
-    def search(self, q: str, k=5) -> list[dict]:
+    @staticmethod
+    def _scope(agent):
+        """SQL filter: None sees every fact, an agent id sees its own plus the shared ones (agent = '')."""
+        return ("", ()) if agent is None else (" AND f.agent IN ('', ?)", (agent,))
+
+    def search(self, q: str, k=5, agent=None) -> list[dict]:
         ws = list(dict.fromkeys(words(q)))
         if not ws:
             return []
         terms = " OR ".join(f'"{w}"*' for w in ws)
+        cond, extra = self._scope(agent)
         rows = [dict(r) for r in self._x(
             "SELECT f.* FROM facts_fts JOIN facts f ON f.id=facts_fts.rowid "
-            "WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?", (terms, k))]
+            f"WHERE facts_fts MATCH ?{cond} ORDER BY rank LIMIT ?", (terms, *extra, k))]
         if self.mirror and len(rows) < k:
             have = {r["id"] for r in rows}
             for text in self.mirror.recall(q, k):
-                for r in self._x("SELECT * FROM facts WHERE content=? LIMIT 1", (text,)):
+                cond, extra = self._scope(agent)
+                for r in self._x(f"SELECT f.* FROM facts f WHERE f.content=?{cond} LIMIT 1", (text, *extra)):
                     if r["id"] not in have:
                         have.add(r["id"])
                         rows.append(dict(r))
         return rows[:k]
 
-    def recent(self, k=20) -> list[dict]:
-        return [dict(r) for r in self._x("SELECT * FROM facts ORDER BY id DESC LIMIT ?", (k,))]
+    def recent(self, k=20, agent=None) -> list[dict]:
+        cond, extra = self._scope(agent)
+        return [dict(r) for r in self._x(f"SELECT f.* FROM facts f WHERE 1=1{cond} ORDER BY f.id DESC LIMIT ?", (*extra, k))]
 
-    def relevant(self, q: str, k=5, recent=5) -> list[dict]:
+    def get(self, fid: int) -> dict | None:
+        rows = self._x("SELECT * FROM facts WHERE id=?", (fid,))
+        return dict(rows[0]) if rows else None
+
+    def relevant(self, q: str, k=5, recent=5, agent=None) -> list[dict]:
         """Facts matching the query plus the newest ones, deduplicated."""
-        out = self.search(q, k)
+        out = self.search(q, k, agent)
         seen = {f["id"] for f in out}
-        out += [f for f in self.recent(recent) if f["id"] not in seen]
+        out += [f for f in self.recent(recent, agent) if f["id"] not in seen]
         return out
 
     def delete(self, fid: int):

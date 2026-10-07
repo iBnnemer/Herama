@@ -47,11 +47,11 @@ def test_log_turn_auto_extract(mem):
 def test_arabic_search_and_relevant(tmp_path):
     from app.memory.store import Memory
     m = Memory(tmp_path / "ar.db")
-    m.add("المستخدم يحب القهوة في الصباح")
+    m.add("\u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645 \u064a\u062d\u0628 \u0627\u0644\u0642\u0647\u0648\u0629 \u0641\u064a \u0627\u0644\u0635\u0628\u0627\u062d")
     m.add("fact about something unrelated here")
-    assert m.search("القهوه")  # ta-marbuta / ha merge
-    assert m.search("والقهوة")  # prefix stripped
-    ids = [f["id"] for f in m.relevant("قهوة", k=1, recent=5)]
+    assert m.search("\u0627\u0644\u0642\u0647\u0648\u0647")  # ta-marbuta / ha merge
+    assert m.search("\u0648\u0627\u0644\u0642\u0647\u0648\u0629")  # prefix stripped
+    ids = [f["id"] for f in m.relevant("\u0642\u0647\u0648\u0629", k=1, recent=5)]
     assert len(ids) == len(set(ids)) == 2
 
 
@@ -77,3 +77,15 @@ def test_mirror_union(tmp_path):
     m = Memory(tmp_path / "m.db", mirror=f)
     m.add("semantic only match text here")
     assert f.saved and m.search("zzzz")[0]["content"].startswith("semantic")
+
+
+def test_agent_scoped_memory(tmp_path):
+    from app.memory.store import Memory
+    m = Memory(tmp_path / "s.db")
+    m.add("the shared fact about coffee beans here")
+    a = m.add("private coffee note of agent a one", agent="a")
+    m.add("private coffee note of agent b two", agent="b")
+    ids = {f["id"] for f in m.search("coffee", 10, agent="a")}
+    assert a in ids and len(ids) == 2           # own + shared, never agent b
+    assert len(m.search("coffee", 10)) == 3     # no agent = everything
+    assert len(m.recent(10, agent="b")) == 2

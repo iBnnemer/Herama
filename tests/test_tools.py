@@ -218,3 +218,40 @@ def test_search_computer_finds_folders_by_name(tmp_path, monkeypatch):
     lines = r.splitlines()
     assert lines[0].startswith(str(tmp_path / "Documents" / "NMR") + "/") and "(folder" in lines[0]
     assert "nmr_notes.txt" in r
+
+
+def test_agent_memory_and_collaboration(tmp_path, monkeypatch):
+    import app.config as cfg
+    from app import tools
+    from app.memory import store
+    monkeypatch.setattr(cfg, "MEMORY_DIR", tmp_path)
+    monkeypatch.setattr(store, "memory", store.Memory(tmp_path / "m.db"))
+    r = tools.run("remember", {"fact": "agent a likes green tea a lot"}, agent="a")
+    assert r["ok"] and "private" in r["result"]
+    tools.run("remember", {"fact": "everyone should know the green deadline", "shared": True}, agent="a")
+    assert "green tea" in tools.run("recall", {"query": "green"}, agent="a")["result"]
+    other = tools.run("recall", {"query": "green"}, agent="b")["result"]
+    assert "green tea" not in other and "deadline" in other
+    fid = int(r["result"].split("#")[1].split()[0])
+    assert not tools.run("forget", {"id": fid}, agent="b")["ok"]
+    assert tools.run("forget", {"id": fid}, agent="a")["ok"]
+
+
+def test_ask_agent(tmp_path, monkeypatch):
+    import app.config as cfg
+    from app import tools
+    from app.engine import engine
+    monkeypatch.setattr(cfg, "MEMORY_DIR", tmp_path)
+    from app.api import agents
+    agents._save([dict(agents.DEFAULT_AGENT), {"id": "r1", "name": "Researcher", "model": "m1", "system_prompt": "research"}])
+    seen = {}
+
+    def fake(name, msgs, opts, stream, vision=False):
+        seen["model"], seen["system"] = name, msgs[0]["content"]
+        yield "found it"
+        yield {}
+    monkeypatch.setattr(engine, "chat", fake)
+    ok = tools.run("ask_agent", {"agent": "researcher", "task": "look up x"}, agent="default", model="main")
+    assert ok["ok"] and "found it" in ok["result"] and seen["model"] == "m1"
+    assert not tools.run("ask_agent", {"agent": "default", "task": "x"}, agent="default")["ok"]
+    assert "Researcher" in tools.run("list_agents", {}, agent="default")["result"]

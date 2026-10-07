@@ -33,7 +33,7 @@ interface Queued { text: string; atts: Attachment[] }
 const HISTORY_LIMIT = 40;
 const MAX_ROUNDS = 16;
 const NO_MORE_TOOLS = "(Tool limit reached. Do not call any more tools. Answer now with what you found so far, and say what is still unknown.)";
-const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory or Utilities), call use_tools to switch it on. " +
+const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory, Agents or Utilities), call use_tools to switch it on. " +
   "Use tools when they help, and never claim you did something you did not do with a tool. " +
   "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
   "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets. " +
@@ -166,7 +166,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
     }
 
     const execWithAccess = async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
-      const go = () => runTool(name, args, [...dirs, ...grants.current.write], grants.current.read, grants.current.computer);
+      const go = () => runTool(name, args, [...dirs, ...grants.current.write], grants.current.read, grants.current.computer, agent?.id ?? "default", model);
       const res = await go();
       const na = res.needs_access;
       if (!na) return res;
@@ -194,7 +194,7 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
         if (finalRound) messages.push({ role: "user", content: NO_MORE_TOOLS });
         for await (const piece of streamChat({
           model, messages, numCtx: state.contextLength, ...approvedTune(state, model), temperature: ep.temperature, top_p: ep.top_p,
-          signal: ctrl.signal, tools: finalRound ? [] : pick().map(t => t.schema), onToolCalls: c => { calls = c; },
+          signal: ctrl.signal, agent: agent?.id ?? "default", tools: finalRound ? [] : pick().map(t => t.schema), onToolCalls: c => { calls = c; },
         })) {
           text += piece;
           if (!tFirst) tFirst = performance.now();

@@ -19,11 +19,12 @@ export default function CapabilitiesPage({ models, connected, engine, runtime, o
 
   const [granted, setGranted] = useState<string[]>(() => approvals.always());
   const [tools, setTools] = useState<ToolInfo[]>([]);
-  const [facts, setFacts] = useState<{ id: number; content: string }[]>([]);
+  const [facts, setFacts] = useState<{ id: number; content: string; agent?: string }[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
   const loadFacts = () => fetch(`${BASE}/api/memory?k=50`).then(r => r.json()).then(d => setFacts(Array.isArray(d) ? d : d.facts ?? [])).catch(() => setFacts([]));
   const dropFact = (id: number) => fetch(`${BASE}/api/memory/${id}`, { method: "DELETE" }).then(loadFacts).catch(() => {});
 
-  useEffect(() => { if (connected) { void fetchSkills().then(setSkills); void loadTools().then(setTools); void loadFacts(); } }, [connected]);
+  useEffect(() => { if (connected) { void fetchSkills().then(setSkills); void loadTools().then(setTools); void loadFacts(); void fetch(`${BASE}/api/agents`).then(r => r.json()).then((l: { id: string; name: string }[]) => setNames(Object.fromEntries(l.map(a => [a.id, a.name])))).catch(() => {}); } }, [connected]);
 
   return (
     <PageShell title="Capabilities" hint="What this local backend can use right now.">
@@ -43,7 +44,7 @@ export default function CapabilitiesPage({ models, connected, engine, runtime, o
       {connected ? <ModelHub installed={models.map(m => m.name)} /> : <Empty text="Backend offline." />}
       <h2 style={{ fontSize: 13, color: "var(--text-dim)", margin: "20px 0 4px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Agent tools</h2>
       <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 8 }}>Every agent has these, but only the groups your message needs are switched on (for example "search" turns on Web); the model can switch on another group itself. Ask mode confirms file changes and commands, Plan mode allows reading only, Off disables them.</div>
-      {["Files", "Web", "Shell", "Skills", "Memory", "Utilities"].map(g => {
+      {["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Utilities"].map(g => {
         const list = tools.filter(t => t.group === g);
         return list.length === 0 ? null : (
           <div key={g} style={{ marginBottom: 12 }}>
@@ -78,6 +79,7 @@ export default function CapabilitiesPage({ models, connected, engine, runtime, o
       {facts.map(f => (
         <div key={f.id} style={{ ...card, display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
           <span style={{ flex: 1, wordBreak: "break-word" }}>{f.content}</span>
+          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{f.agent ? names[f.agent] ?? f.agent : "shared"}</span>
           <button style={ghostBtn} onClick={() => void dropFact(f.id)}>Delete</button>
         </div>
       ))}

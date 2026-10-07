@@ -106,6 +106,7 @@ class ChatReq(BaseModel):
     options: dict = {}
     memory: bool = False
     auto_extract: bool = False
+    agent: str = ""            # whose memory to use: its own facts plus the shared ones
 
 
 def _build(r: GenReq) -> str:
@@ -161,9 +162,9 @@ def generate(r: GenReq):
     return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
 
-def _inject_memory(messages: list[dict], query: str) -> list[dict]:
+def _inject_memory(messages: list[dict], query: str, agent: str | None = None) -> list[dict]:
     """Prepend a system message with recalled facts if any match."""
-    facts = memory.relevant(query)
+    facts = memory.relevant(query, agent=agent)
     if not facts:
         return messages
     block = "Known facts:\n" + "\n".join(f"- #{f['id']} {f['content']}" for f in facts)
@@ -199,7 +200,7 @@ def chat(r: ChatReq):
 
     t0 = time.perf_counter_ns()
     last_user = next((m["content"] for m in reversed(r.messages) if m.get("role") == "user"), "")
-    msgs = _inject_memory(r.messages, last_user) if r.memory and last_user else r.messages
+    msgs = _inject_memory(r.messages, last_user, r.agent or None) if r.memory and last_user else r.messages
     has_images = any(m.get("images") for m in msgs)
     opts = {**r.options, "tools": r.tools} if r.tools else r.options
     gen = engine.chat(r.model, _to_openai(msgs), opts, r.stream, vision=has_images)

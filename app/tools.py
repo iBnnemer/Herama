@@ -68,6 +68,8 @@ class Ctx:
     dirs: list[Path]                                       # read and write
     read_dirs: list[Path] = field(default_factory=list)    # read only (paths the user mentioned or approved)
     computer: bool = False                                 # the user approved searching the whole computer
+    agent: str = ""                                        # id of the agent calling the tool (its own memory)
+    model: str = ""                                        # model the caller is using (default for helper agents)
 
 
 REGISTRY: dict[str, Tool] = {}
@@ -109,9 +111,10 @@ def _paths(items: list[str] | None) -> list[Path]:
     return out
 
 
-def make_ctx(dirs: list[str] | None, read_dirs: list[str] | None = None, computer: bool = False) -> Ctx:
+def make_ctx(dirs: list[str] | None, read_dirs: list[str] | None = None, computer: bool = False,
+             agent: str = "", model: str = "") -> Ctx:
     found = [d for d in _paths(dirs) if d.is_dir()]
-    return Ctx(found or [workspace().resolve()], _paths(read_dirs), computer)
+    return Ctx(found or [workspace().resolve()], _paths(read_dirs), computer, agent, model)
 
 
 def _inside(p: Path, root: Path) -> bool:
@@ -699,8 +702,9 @@ def _create_skill(a, ctx):
 # ── memory ────────────────────────────────────────────────────────────────────
 
 @tool("remember", "Memory", "memory",
-      "Remember one short, lasting fact about the user or their work (a preference, a name, a project path, a decision) so it is known in later conversations. One fact per call. Never save passwords, keys or other secrets.",
-      {"fact": S}, ["fact"])
+      "Remember one short, lasting fact about the user or their work (a preference, a name, a project path, a decision) so it is known in later conversations. "
+      "By default the fact is private to you; set shared to true when other agents should know it too. One fact per call. Never save passwords, keys or other secrets.",
+      {"fact": S, "shared": B}, ["fact"])
 def _remember(a, ctx):
     from app.memory.store import memory
     fact = (a.get("fact") or "").strip()
@@ -710,21 +714,82 @@ def _remember(a, ctx):
         raise ToolError("keep the fact under 300 characters")
     if SECRET_RE.search(fact):
         raise ToolError("this looks like a secret, so it was not saved")
-    return f"Remembered as #{memory.add(fact, kind='fact', tags='agent')}"
+    owner = "" if a.get("shared") else ctx.agent
+    fid = memory.add(fact, kind="fact", tags="agent", agent=owner)
+    return f"Remembered as #{fid} ({'shared' if not owner else 'private'})"
 
 
-@tool("recall", "Memory", "memory", "Search the remembered facts by words. Each result shows its number (#n).", {"query": S}, ["query"])
+@tool("recall", "Memory", "memory",
+      "Search what you remember (your private facts and the shared ones) by words. Each result shows its number (#n).", {"query": S}, ["query"])
 def _recall(a, ctx):
     from app.memory.store import memory
-    rows = memory.search(a["query"], 10) or []
-    return "\n".join(f"#{r['id']} {r['content']}" for r in rows) or "Nothing remembered about that."
+    rows = memory.search(a["query"], 10, ctx.agent or None) or []
+    return "\n".join(f"#{r['id']} {r['content']}" + ("" if r.get("agent") else " [shared]") for r in rows) or "Nothing remembered about that."
 
 
-@tool("forget", "Memory", "memory", "Delete a remembered fact by its number (shown as #n in what you remember).", {"id": I}, ["id"])
+@tool("forget", "Memory", "memory", "Delete a remembered fact by its number (shown as #n). You can delete your own and shared facts.", {"id": I}, ["id"])
 def _forget(a, ctx):
     from app.memory.store import memory
-    memory.delete(int(a["id"]))
-    return f"Forgot #{int(a['id'])}"
+    fid = int(a["id"])
+    row = memory.get(fid)
+    if row is None:
+        raise ToolError(f"no fact #{fid}")
+    if row.get("agent") and ctx.agent and row["agent"] != ctx.agent:
+        raise ToolError(f"fact #{fid} belongs to another agent")
+    memory.delete(fid)
+    return f"Forgot #{fid}"
+
+
+# ── agents (collaboration) ────────────────────────────────────────────────────
+
+def _agents() -> list[dict]:
+    from app.api import agents
+    return agents._load()
+
+
+def _find_agent(who: str) -> dict:
+    who = (who or "").strip().lower()
+    for ag in _agents():
+        if who in (ag["id"].lower(), ag["name"].lower()):
+            return ag
+    raise ToolError(f"no agent named '{who}'; call list_agents to see them")
+
+
+@tool("list_agents", "Agents", "read", "List the other agents you can ask for help, with what each one is for.")
+def _list_agents(a, ctx):
+    rows = [ag for ag in _agents() if ag["id"] != (ctx.agent or "default")]
+    return "\n".join(f"{ag['name']} (id {ag['id']}): {(ag.get('system_prompt') or '')[:160]}" for ag in rows) or "There are no other agents."
+
+
+@tool("ask_agent", "Agents", "read",
+      "Ask another agent to do a sub-task and get its answer back. It works alone with its own instructions and memory (and the shared facts), "
+      "so give it everything it needs in the task text. Use list_agents first to see who is available.",
+      {"agent": S, "task": S}, ["agent", "task"])
+def _ask_agent(a, ctx):
+    from app.engine import engine
+    from app.memory.store import memory
+    target = _find_agent(a.get("agent"))
+    task = (a.get("task") or "").strip()
+    if not task:
+        raise ToolError("task is empty")
+    if target["id"] == (ctx.agent or "default"):
+        raise ToolError("you cannot ask yourself")
+    model = target.get("model") or ctx.model
+    if not model:
+        raise ToolError("no model is set for that agent")
+    system = (target.get("system_prompt") or "You are a helpful assistant.").strip()
+    facts = memory.relevant(task, agent=target["id"])
+    if facts:
+        system += "\n\nKnown facts:\n" + "\n".join(f"- #{f['id']} {f['content']}" for f in facts)
+    system += f"\n\nAnother agent ({ctx.agent or 'default'}) asked you for help. Answer the task directly and briefly."
+    msgs = [{"role": "system", "content": system}, {"role": "user", "content": task}]
+    try:
+        gen = engine.chat(model, msgs, {"num_predict": 1500}, False)
+        text = next(gen)
+        list(gen)  # let the engine finish its bookkeeping
+    except FileNotFoundError:
+        raise ToolError(f"model '{model}' not found") from None
+    return f"{target['name']} answered:\n{text.strip()}"
 
 
 # ── utilities ─────────────────────────────────────────────────────────────────
@@ -791,8 +856,8 @@ def _system_info(a, ctx):
 CLIENT_TOOLS = [
     Tool("use_tools", "Utilities", "ui",
          "Switch on more tools when the task needs them. Only a few tools are active at first. Groups: Files (read, write, search files), Web (search, open pages), "
-         "Shell (run commands), Skills (saved programs), Memory (remember facts), Utilities (time, calculator, computer info).",
-         {"groups": _arr({"type": "string", "enum": ["Files", "Web", "Shell", "Skills", "Memory", "Utilities"]})}, ["groups"], lambda a, c: ""),
+         "Shell (run commands), Skills (saved programs), Memory (remember facts), Agents (ask other agents for help), Utilities (time, calculator, computer info).",
+         {"groups": _arr({"type": "string", "enum": ["Files", "Web", "Shell", "Skills", "Memory", "Agents", "Utilities"]})}, ["groups"], lambda a, c: ""),
     Tool("ask_user", "Utilities", "ui", "Ask the user a question when you need a decision or missing detail, then stop and wait for the answer.",
          {"question": S}, ["question"], lambda a, c: ""),
     Tool("update_plan", "Utilities", "ui",
@@ -809,7 +874,8 @@ def listing() -> list[dict]:
              "client": t in CLIENT_TOOLS} for t in REGISTRY.values()]
 
 
-def run(name: str, args: dict, dirs: list[str] | None = None, read_dirs: list[str] | None = None, computer: bool = False) -> dict:
+def run(name: str, args: dict, dirs: list[str] | None = None, read_dirs: list[str] | None = None, computer: bool = False,
+        agent: str = "", model: str = "") -> dict:
     """Run one tool. Returns {"ok": bool, "result": str}; problems come back as text for the model to read.
 
     When the tool needs a folder nobody approved yet, the answer also has "needs_access": {"folder", "write"}."""
@@ -818,7 +884,7 @@ def run(name: str, args: dict, dirs: list[str] | None = None, read_dirs: list[st
         return {"ok": False, "result": f"unknown tool: {name}"}
     extra: dict = {}
     try:
-        out = t.fn(args if isinstance(args, dict) else {}, make_ctx(dirs, read_dirs, computer))
+        out = t.fn(args if isinstance(args, dict) else {}, make_ctx(dirs, read_dirs, computer, agent, model))
         ok = True
     except NeedsAccess as e:
         out, ok, extra = str(e), False, {"needs_access": {"folder": e.folder, "write": e.write}}
