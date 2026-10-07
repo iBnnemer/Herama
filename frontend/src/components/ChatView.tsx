@@ -31,12 +31,14 @@ interface Props {
 interface Queued { text: string; atts: Attachment[] }
 
 const HISTORY_LIMIT = 40;
-const MAX_ROUNDS = 10;
+const MAX_ROUNDS = 16;
+const NO_MORE_TOOLS = "(Tool limit reached. Do not call any more tools. Answer now with what you found so far, and say what is still unknown.)";
 const TOOLS_HINT = "You can use tools, but only some are active for each message. If you need a kind of tool you do not have (Files, Web, Shell, Skills, Memory or Utilities), call use_tools to switch it on. " +
   "Use tools when they help, and never claim you did something you did not do with a tool. " +
   "Read a file before editing it. Relative file paths start in the first folder listed by workspace_folders. For multi-step work keep a short plan with update_plan. " +
   "Use ask_user when something essential is missing. Use remember only for lasting facts, never secrets. " +
-  "To find something on the user's computer use search_computer, then read_file; to analyze a folder start with folder_tree. Folders outside the project ask the user for approval automatically.";
+  "To find something on the user's computer use search_computer, then read_file; to analyze a folder start with folder_tree (not folder by folder). Folders outside the project ask the user for approval automatically. " +
+  "Do not repeat a call you already made. Stop calling tools as soon as you have enough to answer.";
 
 const allowedBySafety = (t: ToolInfo, safety: Safety) =>
   safety === "off" ? false : safety === "plan" ? ["read", "net", "memory", "ui"].includes(t.kind) : true;
@@ -181,13 +183,18 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
       return go();
     };
 
+    const seen = new Map<string, number>();   // identical calls made this turn
+    let stuck = false;
+
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
         let text = "";
         let calls: ToolCall[] = [];
+        const finalRound = round === MAX_ROUNDS - 1 || stuck;   // out of steps or going in circles: answer without tools
+        if (finalRound) messages.push({ role: "user", content: NO_MORE_TOOLS });
         for await (const piece of streamChat({
           model, messages, numCtx: state.contextLength, ...approvedTune(state, model), temperature: ep.temperature, top_p: ep.top_p,
-          signal: ctrl.signal, tools: pick().map(t => t.schema), onToolCalls: c => { calls = c; },
+          signal: ctrl.signal, tools: finalRound ? [] : pick().map(t => t.schema), onToolCalls: c => { calls = c; },
         })) {
           text += piece;
           if (!tFirst) tFirst = performance.now();
@@ -214,12 +221,18 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
           const row = turn.length - 1;
           let result: ToolResult;
           let declined = false;
-          if (info && state.safety === "ask" && (info.kind === "write" || info.kind === "exec") && !approvals.has(`tool:${name}`)) {
+          const sig = `${name}:${call.function.arguments}`;
+          const times = (seen.get(sig) ?? 0) + 1;
+          seen.set(sig, times);
+          if (info && times === 1 && state.safety === "ask" && (info.kind === "write" || info.kind === "exec") && !approvals.has(`tool:${name}`)) {
             const c = await ask(`Allow the agent to run ${name}?`, JSON.stringify(args, null, 2).slice(0, 1200));
             if (c === "cancel") declined = true;
             else if (c !== "once") approvals.remember(`tool:${name}`, c);
           }
-          if (!info) result = { ok: false, result: `unknown tool: ${name}` };
+          if (times > 1 && info?.kind !== "ui") {
+            if (times >= 3) stuck = true;
+            result = { ok: false, result: "You already made this exact call. Use the earlier result and continue, or answer now." };
+          } else if (!info) result = { ok: false, result: `unknown tool: ${name}` };
           else if (declined) {
             result = { ok: false, result: "The user declined this action." };
           } else if (name === "ask_user") {
@@ -242,7 +255,6 @@ export default function ChatView({ conv, agent, project, projects, state, onConv
         if (question) { turn.push({ id: rid(), role: "assistant", content: question, ts: Date.now() }); render(); break; }
         turn.push({ id: rid(), role: "assistant", content: "", ts: Date.now(), streaming: true });
         render();
-        if (round === MAX_ROUNDS - 1) patchLast({ content: "[stopped: too many tool steps in one turn]", streaming: false });
       }
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
