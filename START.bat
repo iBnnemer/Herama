@@ -39,16 +39,11 @@ goto :fail_electron
 cd ..
 echo       done.
 
-echo [3/3] Starting backend and UI...
+echo [3/3] Starting herama...
 echo       The first start also downloads the llama.cpp engine that matches your GPU.
-start "herama-backend" cmd /k "cd /d %~dp0 && python -m uvicorn app.main:app --host 127.0.0.1 --port 11434 --log-level info"
-timeout /t 4 /nobreak >nul
-cd frontend
-call npm run dev
-cd ..
-echo.
-echo  Session ended.
-pause
+echo       This window closes by itself. The app runs without a terminal and stops when you close it.
+echo       Logs: herama-run.log (app) and herama-backend.log (backend).
+wscript "%~dp0herama.vbs"
 exit /b 0
 
 :no_python

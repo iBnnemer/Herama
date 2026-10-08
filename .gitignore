@@ -10,3 +10,5 @@ frontend/release/
 runtime/
 draft_model.txt
 .processes/
+herama-run.log
+herama-backend.log

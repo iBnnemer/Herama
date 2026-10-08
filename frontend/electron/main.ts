@@ -27,13 +27,16 @@ async function waitForBackend(maxMs = 20_000): Promise<void> {
   }
 }
 
+/** Starts the backend without a console window; it stops again when the app quits. */
 function trySpawnBackend(): void {
-  const repoRoot = path.join(process.resourcesPath, "app");
+  const repoRoot = isDev ? path.join(__dirname, "..", "..") : path.join(process.resourcesPath, "app");
   const py = process.platform === "win32" ? "python" : "python3";
+  let out: number | "ignore" = "ignore";
+  try { out = fs.openSync(path.join(repoRoot, "herama-backend.log"), "w"); } catch { /* read-only folder: no log */ }
   backendProc = spawn(
     py,
-    ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(BACKEND_PORT), "--log-level", "warning"],
-    { cwd: repoRoot, windowsHide: true, stdio: "ignore", env: { ...process.env, PYTHONUNBUFFERED: "1" } }
+    ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(BACKEND_PORT), "--log-level", isDev ? "info" : "warning"],
+    { cwd: repoRoot, windowsHide: true, stdio: ["ignore", out, out], env: { ...process.env, PYTHONUNBUFFERED: "1" } }
   );
   backendProc.on("error", err => console.error("[herama] backend error:", err.message));
 }
@@ -168,7 +171,7 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   registerIpc();
   const alreadyUp = await checkBackend();
-  if (!alreadyUp && !isDev) {
+  if (!alreadyUp) {
     trySpawnBackend();
     await waitForBackend(20_000);
   }
@@ -184,6 +187,6 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
-  if (backendProc && !backendProc.killed) backendProc.kill();
+  if (backendProc && !backendProc.killed) killTree(backendProc);
   termProcs.forEach(killTree);
 });
