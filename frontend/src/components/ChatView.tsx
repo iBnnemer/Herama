@@ -4,6 +4,7 @@ import { EFFORT_PARAMS } from "../types";
 import { streamChat, approvedTune, loadTools, loadEnvironment, runTool } from "../api";
 import type { ChatMsg, ModelState, ToolCall, ToolInfo, ToolResult } from "../api";
 import { TOOL_GROUPS, activeTools, extractPaths, matchGroups } from "../toolRouting";
+import { makeLoopGuard } from "../loopGuard";
 import { agentModel, projectContext, projectFolders, rid, splitThink } from "../util";
 import MessageList from "./MessageList";
 import ApprovalCard from "./ApprovalCard";
@@ -270,11 +271,13 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
 
     const seen = new Map<string, number>();   // identical calls made this turn
     let stuck = false;
+    let looped = false;   // the model began repeating itself and was stopped
 
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
         let text = "";
         let calls: ToolCall[] = [];
+        const loopGuard = makeLoopGuard();
         const finalRound = round === MAX_ROUNDS - 1 || stuck;   // out of steps or going in circles: answer without tools
         if (finalRound) messages.push({ role: "user", content: NO_MORE_TOOLS });
         for await (const piece of streamChat({
@@ -282,6 +285,17 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
           signal: ctrl.signal, agent: agent?.id ?? "default", tools: finalRound ? [] : pick().map(t => t.schema), onToolCalls: c => { calls = c; },
         })) {
           text += piece;
+          const cut = loopGuard(text);
+          if (cut >= 0) {   // repeating the same passage: keep one copy, stop the generation
+            const open = splitThink(text.slice(0, cut)).open;
+            text = `${text.slice(0, cut).trimEnd()}${open ? "\n</think>" : ""}\n\n[stopped: the model started repeating itself]`;
+            patchLast({ content: text, streaming: false });
+            calls = [];
+            looped = true;
+            failed = true;
+            ctrl.abort();
+            break;
+          }
           if (!tFirst) tFirst = performance.now();
           else {
             tokens++;
@@ -350,7 +364,7 @@ export default function ChatView({ conv, agent, group, jobs, onJobsChange, proje
         patchLast({ content: `${turn[turn.length - 1].content}${turn[turn.length - 1].content ? "\n" : ""}[error] ${String(err)}` });
       }
     } finally {
-      const stopped = ctrl.signal.aborted;
+      const stopped = ctrl.signal.aborted && !looped;
       const last = turn[turn.length - 1];
       if (last.role === "assistant" && !last.content) {
         if (turn.length > 1 && !stopped) turn.pop();  // nothing more to say after the tool results
