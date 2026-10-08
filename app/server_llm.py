@@ -66,7 +66,7 @@ class ServerLLM:
         self.port = _free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         cmd = [str(binary), "-m", str(model), "--host", "127.0.0.1", "--port", str(self.port),
-               "-c", str(n_ctx), "--jinja"]
+               "-c", str(n_ctx), "--jinja", "-np", "1"]  # one slot: requests are serialised anyway, and the default 4 slots only add cache bookkeeping
         if ngl is not None:  # explicit GPU layer count; otherwise llama-server picks one itself
             cmd += ["-ngl", str(ngl)]
         if kv_type != "f16":  # compressed KV cache needs flash attention
