@@ -12,6 +12,10 @@ from app.server_llm import ServerLLM
 _DEFAULT_KEEP = 300  # seconds; -1 = indefinite
 
 
+# optional llama-server sampling controls against repetition, passed through when the client sets them
+_SAMPLING = ("repeat_penalty", "repeat_last_n", "dry_multiplier", "dry_base", "dry_allowed_length")
+
+
 def _norm(name: str) -> str:
     """Strip ':latest' suffix for consistent comparisons."""
     return name.removesuffix(":latest")
@@ -240,6 +244,7 @@ class Engine:
             stop=opts.get("stop") or None,
             seed=opts.get("seed", -1),
             tools=opts.get("tools") or None,
+            **{k: opts[k] for k in _SAMPLING if opts.get(k) is not None},
         )
 
     def generate(self, name: str, prompt: str, opts: dict, stream: bool):

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AppState, Conversation, Effort, Safety } from "../../types";
+import type { AppState, Conversation, Effort, RepeatGuard, Safety } from "../../types";
 import { EFFORT_LEVELS, EFFORT_PARAMS } from "../../types";
 import type { Prefs } from "../../prefs";
 import { BASE, deleteProvider, fetchSkills, listProviders, loadTools, saveProvider, testProvider } from "../../api";
@@ -23,6 +23,7 @@ interface Props {
   onContext: (n: number) => void;
   onEffort: (e: Effort) => void;
   onSafety: (s: Safety) => void;
+  onRepeatGuard: (v: RepeatGuard) => void;
   onModelsChanged: () => void;
   target?: string;
 }
@@ -234,6 +235,9 @@ export default function SettingsPage(p: Props) {
             </Field>
             <Field label="Reasoning level" hint="Higher levels make answers more varied and creative; lower levels are steadier.">
               <Segmented value={state.effort} items={EFFORT_LEVELS.map(e => ({ id: e, label: EFFORT_PARAMS[e].label }))} onPick={p.onEffort} />
+            </Field>
+            <Field label="Repetition protection" hint="Helps when a model loops. Light adds a mild repeat penalty; Strong adds DRY sampling and a stronger penalty. Strong can disturb code, tables and JSON. Applies to local models only.">
+              <Segmented value={state.repeatGuard} items={[{ id: "off", label: "Off" }, { id: "light", label: "Light" }, { id: "strong", label: "Strong" }]} onPick={p.onRepeatGuard} />
             </Field>
           </>
         );

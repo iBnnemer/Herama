@@ -125,6 +125,15 @@ export async function fetchSkills(): Promise<{ name: string; desc: string }[]> {
   } catch { return []; }
 }
 
+const SAMPLING: Record<string, Record<string, number>> = {
+  off: {},
+  light: { repeat_penalty: 1.05, repeat_last_n: 256 },
+  strong: { repeat_penalty: 1.1, repeat_last_n: 512, dry_multiplier: 0.8, dry_base: 1.75, dry_allowed_length: 5 },
+};
+let sampling: Record<string, number> = {};
+/** Repetition protection applied to every chat request from now on. */
+export function setRepeatGuard(level: string) { sampling = SAMPLING[level] ?? {}; }
+
 export async function* streamChat(opts: {
   model: string;
   messages: ChatMsg[];
@@ -152,7 +161,7 @@ export async function* streamChat(opts: {
       stream: true,
       memory: true,
       agent: opts.agent ?? "",
-      options: { num_ctx: opts.numCtx, num_gpu: opts.numGpu, num_cpu_moe: opts.cpuMoe, num_expert_used: opts.expertUsed, kv_type: opts.kvType, num_thread: opts.threads, temperature: opts.temperature, top_p: opts.top_p },
+      options: { num_ctx: opts.numCtx, num_gpu: opts.numGpu, num_cpu_moe: opts.cpuMoe, num_expert_used: opts.expertUsed, kv_type: opts.kvType, num_thread: opts.threads, temperature: opts.temperature, top_p: opts.top_p, ...sampling },
     }),
   });
   if (!r.ok || !r.body) throw new Error(`backend error ${r.status}: ${(await r.text()).slice(0, 200)}`);

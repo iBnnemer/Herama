@@ -6,7 +6,7 @@ import type {
 import { EFFORT_PARAMS } from "./types";
 import type { ChatMsg, ModelState } from "./api";
 import MonitorModal from "./components/MonitorModal";
-import { fetchModelState, fetchHealth, fetchModels, fetchAgents, fetchGroups, streamChat, retryRuntime, approvedTune } from "./api";
+import { setRepeatGuard, fetchModelState, fetchHealth, fetchModels, fetchAgents, fetchGroups, streamChat, retryRuntime, approvedTune } from "./api";
 import { projectFolders, rid, splitThink } from "./util";
 import { usePersistent } from "./hooks/usePersistent";
 import Sidebar from "./components/Sidebar";
@@ -44,7 +44,7 @@ const VIEW_TITLES: Record<Exclude<View, "chat">, string> = {
 };
 
 const SETTINGS_KEY = "herama.settings";
-type Saved = Pick<AppState, "activeModel" | "contextLength" | "tune" | "effort" | "safety">;
+type Saved = Pick<AppState, "activeModel" | "contextLength" | "tune" | "effort" | "safety" | "repeatGuard">;
 
 /** Last choices (model, context, effort, safety) from the previous run. */
 function savedSettings(): Partial<Saved> {
@@ -59,12 +59,13 @@ export default function App() {
   const [view, setView] = useState<View>("chat");
   const [state, setState] = useState<AppState>({
     connected: false, engine: "", accelerated: null, runtime: null, tps: 0, models: [], agents: [], groups: [],
-    activeModel: "", contextLength: 65536, tune: {}, effort: "medium", safety: "plan", ...savedSettings(),
+    activeModel: "", contextLength: 65536, tune: {}, effort: "medium", safety: "plan", repeatGuard: "off", ...savedSettings(),
   });
   useEffect(() => {
-    const { activeModel, contextLength, tune, effort, safety } = state;
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ activeModel, contextLength, tune, effort, safety })); } catch { /* storage unavailable */ }
-  }, [state.activeModel, state.contextLength, state.tune, state.effort, state.safety]); // eslint-disable-line react-hooks/exhaustive-deps
+    const { activeModel, contextLength, tune, effort, safety, repeatGuard } = state;
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ activeModel, contextLength, tune, effort, safety, repeatGuard })); } catch { /* storage unavailable */ }
+  }, [state.activeModel, state.contextLength, state.tune, state.effort, state.safety, state.repeatGuard]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setRepeatGuard(state.repeatGuard); }, [state.repeatGuard]);
   const [conversations, setConversations] = usePersistent<Conversation[]>("herama.convs", [newConv()], reviveConvs);
   const [activeConvId, setActiveConvId] = useState<string>(() => conversations[0].id);
   useEffect(() => {  // once at startup: drop sessions older than the retention setting
@@ -402,6 +403,7 @@ export default function App() {
             onModel={m => setState(s => ({ ...s, activeModel: m }))}
             onContext={n => setState(s => { const tune = { ...s.tune }; delete tune[s.activeModel]; return { ...s, contextLength: n, tune }; })}
             onEffort={e => setState(s => ({ ...s, effort: e }))} onSafety={v => setState(s => ({ ...s, safety: v }))}
+            onRepeatGuard={v => setState(s => ({ ...s, repeatGuard: v }))}
             onModelsChanged={() => { void poll(); }} target={settingsTarget} />
         </div>
       )}

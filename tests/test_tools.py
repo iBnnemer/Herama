@@ -263,3 +263,10 @@ def test_schedule_tools_are_client_side():
     for n in ("schedule_task", "list_tasks", "cancel_task"):
         assert names[n]["client"] and names[n]["group"] == "Schedule" and names[n]["kind"] == "memory"
     assert not tools.run("schedule_task", {})["ok"]   # handled by the app, not the backend
+
+
+def test_sampling_controls_pass_through_to_the_engine():
+    from app.engine import engine
+    kw = engine._kw({"temperature": 0.5, "repeat_penalty": 1.1, "dry_multiplier": 0.8, "unknown": 1})
+    assert kw["repeat_penalty"] == 1.1 and kw["dry_multiplier"] == 0.8 and "unknown" not in kw
+    assert "repeat_penalty" not in engine._kw({})

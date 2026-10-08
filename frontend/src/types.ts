@@ -4,6 +4,9 @@ export type Safety = "ask" | "plan" | "auto" | "off";
 
 export type Effort = "low" | "medium" | "high" | "max";
 
+/** Protection against a model repeating itself: light = mild repeat penalty, strong = DRY sampling plus a stronger penalty. */
+export type RepeatGuard = "off" | "light" | "strong";
+
 export const EFFORT_LEVELS: Effort[] = ["low", "medium", "high", "max"];
 
 export interface Message {
@@ -95,6 +98,7 @@ export interface AppState {
   tune: Record<string, Tune>;
   effort: Effort;
   safety: Safety;
+  repeatGuard: RepeatGuard;
 }
 
 export const EFFORT_PARAMS: Record<Effort, { temperature: number; top_p: number; label: string; short: string }> = {
