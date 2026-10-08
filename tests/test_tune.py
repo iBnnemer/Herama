@@ -140,3 +140,9 @@ def test_q8_named_model_starts_at_q8_and_drops_to_q4(tmp_path, monkeypatch):
     f = _model(tmp_path, monkeypatch, 7.7, {**DENSE, "block_count": 48, "context_length": 1_000_000}, "dense-Q8_0.gguf")
     assert tune.auto(f, 4096)["kv_type"] == "q8_0"
     assert tune.auto(f, 65536)["kv_type"] == "q4_0"
+
+
+def test_vram_reserve_grows_with_context():
+    assert tune._reserve(2048) < tune._reserve(65536) < tune._reserve(262144)
+    assert abs(tune._reserve(262144) - (tune.RESERVE_GB + tune.CTX_RESERVE_GB)) < 1e-9
+    assert tune._reserve(10 ** 7) == tune._reserve(262144)

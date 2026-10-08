@@ -11,6 +11,11 @@ EXPERT_READ_SHARE = 0.8   # share of the bytes read per token that comes from ex
 KV_SCALE = {"f16": 1.0, "q8_0": 0.53, "q4_0": 0.28}   # relative KV cache size per cache type
 KV_TYPES = tuple(KV_SCALE)
 RESERVE_GB = 1.2          # driver, display and compute buffers kept free in VRAM
+CTX_RESERVE_GB = 1.3      # extra headroom at a 256K context: the compute buffers grow with it, and a full card makes Windows spill into slow shared memory
+
+
+def _reserve(ctx: int) -> float:
+    return RESERVE_GB + CTX_RESERVE_GB * min(1.0, ctx / 262144)
 
 
 def _per_layer(v, layers: int, default: int) -> list[int]:
@@ -96,7 +101,7 @@ def propose(model: Path, ctx: int, ngl: int | None = None, cpu_moe: int | None =
     moe = experts > 1
     size = model.stat().st_size / GB
     kv = _kv_gb(m, ctx, layers, model.name) * KV_SCALE.get(kv_type, 1.0)
-    vram_budget = max(hw["vram_total_gb"] - RESERVE_GB, 0.0)
+    vram_budget = max(hw["vram_total_gb"] - _reserve(ctx), 0.0)
     ram_budget = max(hw["ram_total_gb"] * 0.9 - 2.0, 0.0)
     used = int(m.get("expert_used_count") or 0)
     named = hub.moe_active_ratio(model.name)
